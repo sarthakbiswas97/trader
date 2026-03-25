@@ -1,0 +1,203 @@
+"""
+Bot Control Routes.
+
+Start, stop, and monitor the trading bot.
+"""
+
+import asyncio
+from datetime import datetime
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+
+from backend.api.dependencies import AppStateDep, AuthRequiredDep, BrokerDep
+from backend.api.schemas import (
+    BotStartRequest,
+    BotStartResponse,
+    BotStatus,
+    BotStatusResponse,
+    BotStopResponse,
+    RiskStatus,
+)
+from backend.core.logger import get_logger
+from backend.services.execution_engine import create_engine
+
+logger = get_logger(__name__)
+router = APIRouter()
+
+# Default symbols (NIFTY 50 subset)
+DEFAULT_SYMBOLS = [
+    "RELIANCE", "INFY", "TCS", "HDFCBANK", "ICICIBANK",
+    "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT",
+    "HINDUNILVR", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
+]
+
+
+@router.get("/status", response_model=BotStatusResponse)
+async def get_bot_status(state: AppStateDep):
+    """
+    Get current bot status.
+    """
+    if not state.engine:
+        return BotStatusResponse(
+            status=BotStatus.STOPPED,
+            symbols_count=0,
+        )
+
+    engine = state.engine
+
+    return BotStatusResponse(
+        status=BotStatus.RUNNING if engine.running else BotStatus.STOPPED,
+        cycle_count=engine._cycle_count,
+        last_cycle=(
+            engine._cycle_history[-1].timestamp
+            if engine._cycle_history else None
+        ),
+        symbols_count=len(engine.symbols),
+    )
+
+
+@router.post("/start", response_model=BotStartResponse)
+async def start_bot(
+    request: BotStartRequest,
+    state: AuthRequiredDep,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Start the trading bot.
+
+    The bot runs in the background, executing trading cycles every 5 minutes.
+    """
+    if state.is_running:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bot is already running",
+        )
+
+    symbols = request.symbols or DEFAULT_SYMBOLS
+
+    try:
+        # Create execution engine
+        engine = create_engine(
+            broker=state.broker,
+            symbols=symbols,
+        )
+
+        state.engine = engine
+
+        # Start engine in background
+        async def run_engine():
+            try:
+                await engine.run()
+            except Exception as e:
+                logger.error(f"Engine error: {e}")
+
+        background_tasks.add_task(asyncio.create_task, run_engine())
+
+        logger.info(f"Bot started", symbols=len(symbols))
+
+        return BotStartResponse(
+            success=True,
+            message=f"Bot started with {len(symbols)} symbols",
+            status=BotStatus.RUNNING,
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start bot: {str(e)}",
+        )
+
+
+@router.post("/stop", response_model=BotStopResponse)
+async def stop_bot(state: AppStateDep, square_off: bool = False):
+    """
+    Stop the trading bot.
+
+    Args:
+        square_off: If True, close all open positions before stopping
+    """
+    if not state.engine:
+        return BotStopResponse(
+            success=True,
+            message="Bot was not running",
+            positions_closed=0,
+        )
+
+    positions_closed = 0
+
+    if square_off and state.engine:
+        results = state.engine.square_off_all()
+        positions_closed = len(results)
+
+    state.engine.stop()
+
+    logger.info(f"Bot stopped", positions_closed=positions_closed)
+
+    return BotStopResponse(
+        success=True,
+        message="Bot stopped successfully",
+        positions_closed=positions_closed,
+    )
+
+
+@router.get("/cycles")
+async def get_recent_cycles(state: AppStateDep, limit: int = 10):
+    """
+    Get recent execution cycles.
+    """
+    if not state.engine:
+        return {"cycles": [], "total": 0}
+
+    cycles = state.engine.get_recent_cycles(limit)
+
+    return {
+        "cycles": cycles,
+        "total": state.engine._cycle_count,
+    }
+
+
+@router.get("/risk", response_model=RiskStatus)
+async def get_risk_status(state: AuthRequiredDep):
+    """
+    Get current risk management status.
+    """
+    if not state.engine:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bot not started",
+        )
+
+    risk = state.engine.risk_guardian.get_status()
+
+    return RiskStatus(
+        circuit_breaker_triggered=risk["circuit_breaker_triggered"],
+        circuit_breaker_reason=risk.get("circuit_breaker_reason"),
+        trades_today=risk["trades_today"],
+        max_trades=risk["max_trades"],
+        daily_pnl=risk["daily_pnl"],
+        daily_loss_limit=risk["daily_loss_limit"],
+        current_exposure=risk["current_exposure"],
+        max_exposure=risk["max_exposure"],
+        risk_score=risk["risk_score"],
+    )
+
+
+@router.post("/square-off")
+async def square_off_all(state: AuthRequiredDep):
+    """
+    Emergency square off all positions.
+    """
+    if not state.engine:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bot not started",
+        )
+
+    results = state.engine.square_off_all()
+
+    return {
+        "success": True,
+        "positions_closed": len(results),
+        "results": results,
+    }

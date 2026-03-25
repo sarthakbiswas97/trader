@@ -1,6 +1,6 @@
 """
 Abstract Broker interface.
-All broker implementations (Groww, Paper, etc.) must implement this interface.
+All broker implementations (Zerodha, Paper, etc.) must implement this interface.
 This enables easy swapping between brokers and testing.
 """
 
@@ -175,7 +175,7 @@ class Broker(ABC):
     Abstract base class for all broker implementations.
 
     All methods that interact with the broker must be implemented.
-    This allows swapping between real brokers (Groww) and paper trading.
+    This allows swapping between real brokers (Zerodha) and paper trading.
     """
 
     @abstractmethod

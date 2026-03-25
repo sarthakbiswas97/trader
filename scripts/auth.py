@@ -84,10 +84,24 @@ class CallbackHandler(BaseHTTPRequestHandler):
                 self.wfile.write(html.encode())
 
             except Exception as e:
+                print(f"\n❌ Token exchange failed: {e}")
+                print(f"   API Key: {settings.kite_api_key[:10]}...")
+                print(f"   Request Token: {request_token[:20]}...")
+
                 self.send_response(500)
                 self.send_header("Content-type", "text/html")
                 self.end_headers()
-                self.wfile.write(f"<h1>Error: {e}</h1>".encode())
+                error_html = f"""
+                <html>
+                <head><title>Authentication Failed</title></head>
+                <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+                    <h1 style="color: red;">Authentication Failed</h1>
+                    <p>Error: {e}</p>
+                    <p>Please try again. Check terminal for details.</p>
+                </body>
+                </html>
+                """
+                self.wfile.write(error_html.encode())
         else:
             self.send_response(400)
             self.send_header("Content-type", "text/html")

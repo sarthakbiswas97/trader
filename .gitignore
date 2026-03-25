@@ -8,6 +8,7 @@
 .env.*.local
 *.secret
 .kite_session
+.claude/
 
 # Python
 __pycache__/
@@ -66,7 +67,6 @@ data/historical/*.parquet
 data/training/*.csv
 data/training/*.parquet
 *.csv.gz
-instrument.csv
 
 # Keep structure but ignore contents
 !data/instruments/nifty50.csv

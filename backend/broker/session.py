@@ -61,3 +61,17 @@ def clear_session():
     """Clear saved session."""
     if SESSION_FILE.exists():
         SESSION_FILE.unlink()
+
+
+def load_session() -> dict | None:
+    """
+    Load full session data.
+    Returns None if no session exists.
+    """
+    if not SESSION_FILE.exists():
+        return None
+
+    try:
+        return json.loads(SESSION_FILE.read_text())
+    except Exception:
+        return None

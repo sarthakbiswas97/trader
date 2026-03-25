@@ -1,8 +1,10 @@
 """
 Historical data fetcher service.
 Uses Zerodha Kite Connect API for OHLCV candle data.
+Rate limited to 3 requests/second for historical data API.
 """
 
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -27,15 +29,20 @@ INTERVAL_MAP = {
     "1d": "day",
 }
 
+# Rate limiting: 3 requests per second
+RATE_LIMIT_DELAY = 0.35  # seconds between requests (slightly > 1/3)
+
 
 class HistoricalDataService:
     """
     Service for fetching and storing historical market data from Zerodha.
+    Respects Kite API rate limits (3 req/sec for historical data).
     """
 
     def __init__(self, kite=None):
         self._kite = kite
         self._instruments_cache = {}
+        self._last_request_time = 0
         logger.info("HistoricalDataService initialized")
 
     def set_kite(self, kite):
@@ -46,6 +53,13 @@ class HistoricalDataService:
         if not self._kite:
             raise RuntimeError("Kite client not set. Call set_kite() first.")
 
+    def _rate_limit(self):
+        """Enforce rate limiting between API calls."""
+        elapsed = time.time() - self._last_request_time
+        if elapsed < RATE_LIMIT_DELAY:
+            time.sleep(RATE_LIMIT_DELAY - elapsed)
+        self._last_request_time = time.time()
+
     def get_instrument_token(self, symbol: str, exchange: str = "NSE") -> int:
         """Get instrument token for a symbol."""
         self._ensure_kite()
@@ -54,6 +68,8 @@ class HistoricalDataService:
         if cache_key in self._instruments_cache:
             return self._instruments_cache[cache_key]
 
+        # Load all instruments once (this is a single API call)
+        self._rate_limit()
         instruments = self._kite.instruments(exchange=exchange)
         for inst in instruments:
             key = f"{exchange}:{inst['tradingsymbol']}"
@@ -105,6 +121,7 @@ class HistoricalDataService:
         )
 
         try:
+            self._rate_limit()
             data = self._kite.historical_data(
                 instrument_token=instrument_token,
                 from_date=start_date,
@@ -165,16 +182,31 @@ class HistoricalDataService:
         intervals: list[str] = ["5m", "1h", "1d"],
         days: int = 60,
     ) -> dict[str, dict[str, pd.DataFrame]]:
-        """Download data for multiple symbols."""
+        """Download data for multiple symbols with progress tracking."""
         result = {}
         total = len(symbols)
+        total_requests = total * len(intervals)
+        estimated_time = total_requests * RATE_LIMIT_DELAY
+
+        logger.info(
+            f"Starting download",
+            symbols=total,
+            intervals=len(intervals),
+            total_requests=total_requests,
+            estimated_minutes=round(estimated_time / 60, 1),
+        )
 
         for i, symbol in enumerate(symbols, 1):
             logger.info(f"Progress: {i}/{total} - {symbol}")
+            print(f"  [{i}/{total}] {symbol}...", end=" ", flush=True)
+
             try:
                 result[symbol] = self.download_symbol(symbol, intervals, days)
+                intervals_done = list(result[symbol].keys())
+                print(f"✓ {intervals_done}")
             except Exception as e:
                 logger.error(f"Failed to download {symbol}: {e}")
+                print(f"✗ Error: {e}")
                 continue
 
         logger.info(f"Downloaded data for {len(result)}/{total} symbols")

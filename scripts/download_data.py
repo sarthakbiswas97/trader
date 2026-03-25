@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
 Download historical data for NIFTY 50 stocks using Zerodha Kite Connect.
+Rate limited to 3 requests/second.
 
 Usage:
-    python scripts/download_data.py                     # Download all
+    python scripts/download_data.py                     # Download all NIFTY 50
     python scripts/download_data.py --symbols RELIANCE TCS  # Specific symbols
     python scripts/download_data.py --days 30           # Last 30 days only
+    python scripts/download_data.py --test              # Test with 3 symbols
 """
 
 import argparse
@@ -15,11 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.services.historical_data import HistoricalDataService
-from backend.core.logger import setup_logging, get_logger
+from backend.broker.session import load_access_token
 from backend.config import settings
-
-setup_logging()
-logger = get_logger(__name__)
 
 NIFTY_50 = [
     "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
@@ -42,13 +41,34 @@ def main():
     parser.add_argument("--intervals", nargs="+", default=["5m", "1h", "1d"],
                         help="Intervals to download (default: 5m 1h 1d)")
     parser.add_argument("--test", action="store_true", help="Test with 3 symbols only")
-    parser.add_argument("--access-token", type=str, help="Kite access token")
     args = parser.parse_args()
 
     print("=" * 60)
     print("HISTORICAL DATA DOWNLOADER (Zerodha Kite)")
     print("=" * 60)
 
+    # Load access token from saved session
+    access_token = load_access_token()
+    if not access_token:
+        print("\n❌ No valid session found.")
+        print("   Run 'python scripts/auth.py' first to authenticate.")
+        sys.exit(1)
+
+    # Initialize Kite client
+    from kiteconnect import KiteConnect
+    kite = KiteConnect(api_key=settings.kite_api_key)
+    kite.set_access_token(access_token)
+
+    # Verify connection
+    try:
+        profile = kite.profile()
+        print(f"✅ Connected as: {profile['user_name']}")
+    except Exception as e:
+        print(f"\n❌ Session expired. Run 'python scripts/auth.py' again.")
+        print(f"   Error: {e}")
+        sys.exit(1)
+
+    # Determine symbols
     if args.symbols:
         symbols = args.symbols
     elif args.test:
@@ -56,24 +76,17 @@ def main():
     else:
         symbols = NIFTY_50
 
-    print(f"Symbols: {len(symbols)}")
+    print(f"\nSymbols: {len(symbols)}")
     print(f"Days: {args.days}")
     print(f"Intervals: {args.intervals}")
 
-    if not args.access_token:
-        print("\n⚠️  No access token provided.")
-        print(f"\n1. Visit: https://kite.zerodha.com/connect/login?v=3&api_key={settings.kite_api_key}")
-        print("2. Login and copy the request_token from the redirect URL")
-        print("3. Generate access token and re-run with --access-token")
-        return
+    # Estimate time
+    total_requests = len(symbols) * len(args.intervals) + 1  # +1 for instruments
+    estimated_time = total_requests * 0.35
+    print(f"Estimated time: ~{estimated_time/60:.1f} minutes")
+    print("=" * 60 + "\n")
 
-    print("=" * 60)
-
-    from kiteconnect import KiteConnect
-
-    kite = KiteConnect(api_key=settings.kite_api_key)
-    kite.set_access_token(args.access_token)
-
+    # Initialize service and download
     service = HistoricalDataService(kite=kite)
 
     try:
@@ -87,24 +100,28 @@ def main():
         print("DOWNLOAD COMPLETE")
         print("=" * 60)
 
+        # Summary
         success = 0
         failed = 0
+        total_rows = 0
+
         for symbol in symbols:
             if symbol in results and results[symbol]:
                 success += 1
-                intervals_got = list(results[symbol].keys())
                 rows = sum(len(df) for df in results[symbol].values())
-                print(f"  ✅ {symbol}: {intervals_got} ({rows} total rows)")
+                total_rows += rows
             else:
                 failed += 1
-                print(f"  ❌ {symbol}: Failed")
 
-        print(f"\nSuccess: {success}/{len(symbols)}")
+        print(f"\nSuccess: {success}/{len(symbols)} symbols")
+        print(f"Total rows: {total_rows:,}")
         if failed:
             print(f"Failed: {failed}")
 
+        print(f"\nData saved to: data/historical/")
+
     except KeyboardInterrupt:
-        print("\nDownload interrupted by user")
+        print("\n\nDownload interrupted by user")
         sys.exit(1)
 
 
