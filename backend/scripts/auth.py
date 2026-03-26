@@ -23,11 +23,11 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from backend.config import settings
 
-SESSION_FILE = Path(__file__).parent.parent / ".kite_session"
+SESSION_FILE = Path(__file__).parent.parent.parent / ".kite_session"
 
 
 class CallbackHandler(BaseHTTPRequestHandler):

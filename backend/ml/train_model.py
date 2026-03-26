@@ -264,7 +264,7 @@ class ModelTrainer:
 
 
 def train_and_save(
-    features_path: str = "data/training/features.csv",
+    features_path: str = "",
     lookahead: int = 6,
     threshold: float = 0.005,
     fast: bool = True,
@@ -287,7 +287,10 @@ def train_and_save(
     Returns:
         Training results dict
     """
-    from backend.ml.labeling import prepare_training_data
+    from backend.ml.labeling import prepare_training_data, DEFAULT_FEATURES_PATH
+
+    if not features_path:
+        features_path = DEFAULT_FEATURES_PATH
 
     # Prepare data with optional decay weights
     train_df, test_df, train_weights = prepare_training_data(

@@ -62,15 +62,14 @@ htmlcov/
 .mypy_cache/
 
 # Data files (large)
-data/historical/*.csv
-data/historical/*.parquet
-data/training/*.csv
-data/training/*.parquet
+backend/data/historical/*.csv
+backend/data/historical/*.parquet
+backend/data/training/*.csv
+backend/data/training/*.parquet
 *.csv.gz
 
 # Keep structure but ignore contents
-!data/instruments/nifty50.csv
-!data/.gitkeep
+!backend/data/.gitkeep
 
 # Model artifacts
 backend/ml/models/*.joblib

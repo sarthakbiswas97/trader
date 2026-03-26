@@ -15,7 +15,7 @@ from backend.utils.time_utils import IST
 
 logger = get_logger(__name__)
 
-DATA_DIR = Path(__file__).parent.parent.parent / "data" / "historical"
+DATA_DIR = Path(__file__).parent.parent / "data" / "historical"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 INTERVAL_MAP = {

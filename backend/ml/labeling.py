@@ -4,12 +4,17 @@ Creates target variable based on future price movement.
 Includes time decay weighting for recent data emphasis.
 """
 
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 
 from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+_BACKEND_DIR = Path(__file__).parent.parent
+DEFAULT_FEATURES_PATH = str(_BACKEND_DIR / "data" / "training" / "features.csv")
 
 
 def exponential_decay_weights(
@@ -138,7 +143,7 @@ def create_regression_labels(
 
 
 def prepare_training_data(
-    features_path: str = "data/training/features.csv",
+    features_path: str = DEFAULT_FEATURES_PATH,
     lookahead: int = 6,
     threshold: float = 0.005,
     train_ratio: float = 0.8,

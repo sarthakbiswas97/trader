@@ -341,7 +341,7 @@ class FeatureEngine:
 
         if save:
             from pathlib import Path
-            output_path = Path("data/training/features.csv")
+            output_path = Path(__file__).parent.parent / "data" / "training" / "features.csv"
             output_path.parent.mkdir(parents=True, exist_ok=True)
             combined.to_csv(output_path, index=False)
             logger.info(f"Saved features to {output_path}")

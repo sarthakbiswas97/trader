@@ -1,6 +1,7 @@
 """Application configuration using Pydantic Settings."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -38,7 +39,7 @@ class Settings(BaseSettings):
     max_trades_per_day: int = 20
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(Path(__file__).parent.parent / ".env"),
         env_file_encoding="utf-8",
         extra="ignore"
     )

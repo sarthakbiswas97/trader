@@ -7,9 +7,9 @@ Start, stop, and monitor the trading bot.
 import asyncio
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 
-from backend.api.dependencies import AppStateDep, AuthRequiredDep, BrokerDep
+from backend.api.dependencies import AppStateDep, AuthRequiredDep
 from backend.api.schemas import (
     BotStartRequest,
     BotStartResponse,
@@ -20,6 +20,14 @@ from backend.api.schemas import (
 )
 from backend.core.logger import get_logger
 from backend.services.execution_engine import create_engine
+from backend.services.pipeline import (
+    get_pipeline_status,
+    ensure_model_ready,
+    model_exists,
+    model_is_stale,
+    pipeline_progress,
+    run_full_pipeline,
+)
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -56,21 +64,74 @@ async def get_bot_status(state: AppStateDep):
     )
 
 
+@router.post("/prepare")
+async def prepare_bot(state: AuthRequiredDep):
+    """
+    Prepare the bot by running the ML pipeline if needed.
+    Runs in background — poll /bot/prepare/status for progress.
+
+    Pipeline steps:
+    1. Download historical data (if missing)
+    2. Generate features (if missing)
+    3. Train model (if missing or stale > 7 days)
+    """
+    if pipeline_progress.running:
+        return {"success": True, "message": "Pipeline already running"}
+
+    # Check if pipeline is even needed
+    if model_exists() and not model_is_stale():
+        pipeline_progress.start()
+        pipeline_progress.finish()  # Immediately done
+        return {"success": True, "message": "Model is fresh, no preparation needed"}
+
+    kite = getattr(state.broker, "_kite", None)
+
+    # Run pipeline in background thread
+    import threading
+
+    def run_pipeline():
+        try:
+            run_full_pipeline(kite=kite)
+        except Exception as e:
+            logger.error(f"Pipeline failed: {e}")
+            pipeline_progress.finish(error=str(e))
+
+    thread = threading.Thread(target=run_pipeline, daemon=True)
+    thread.start()
+
+    return {"success": True, "message": "Pipeline started"}
+
+
+@router.get("/prepare/status")
+async def get_prepare_status():
+    """
+    Get current pipeline preparation progress.
+
+    Returns step-by-step progress for the frontend to display.
+    """
+    return pipeline_progress.get_status()
+
+
 @router.post("/start", response_model=BotStartResponse)
 async def start_bot(
     request: BotStartRequest,
     state: AuthRequiredDep,
-    background_tasks: BackgroundTasks,
 ):
     """
     Start the trading bot.
 
-    The bot runs in the background, executing trading cycles every 5 minutes.
+    Requires model to be ready (call /bot/prepare first if needed).
     """
     if state.is_running:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Bot is already running",
+        )
+
+    if not model_exists():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ML model not found. Call /bot/prepare first.",
         )
 
     symbols = request.symbols or DEFAULT_SYMBOLS
@@ -84,14 +145,16 @@ async def start_bot(
 
         state.engine = engine
 
-        # Start engine in background
+        # Start engine in background using asyncio task
+        loop = asyncio.get_event_loop()
+
         async def run_engine():
             try:
                 await engine.run()
             except Exception as e:
                 logger.error(f"Engine error: {e}")
 
-        background_tasks.add_task(asyncio.create_task, run_engine())
+        loop.create_task(run_engine())
 
         logger.info(f"Bot started", symbols=len(symbols))
 
@@ -181,6 +244,44 @@ async def get_risk_status(state: AuthRequiredDep):
         max_exposure=risk["max_exposure"],
         risk_score=risk["risk_score"],
     )
+
+
+@router.get("/pipeline")
+async def get_pipeline_info(state: AppStateDep):
+    """
+    Get ML pipeline status (data, features, model).
+    """
+    return get_pipeline_status()
+
+
+@router.post("/train")
+async def trigger_training(state: AuthRequiredDep, force: bool = False):
+    """
+    Manually trigger the ML training pipeline.
+
+    Args:
+        force: If True, re-run all steps even if data/model exists
+    """
+    from backend.services.pipeline import run_full_pipeline
+
+    kite = getattr(state.broker, "_kite", None)
+
+    results = run_full_pipeline(
+        kite=kite,
+        force=force,
+    )
+
+    if not results["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Pipeline failed: {results}",
+        )
+
+    return {
+        "success": True,
+        "message": "Pipeline completed",
+        "steps": results,
+    }
 
 
 @router.post("/square-off")

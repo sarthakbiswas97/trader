@@ -14,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from backend.ml.train_model import train_and_save
 from backend.ml.labeling import prepare_training_data
