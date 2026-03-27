@@ -121,17 +121,19 @@ class StockRanker:
         return top_candidates
 
     def _passes_filters(self, pred: Prediction) -> bool:
-        """Check if prediction passes all filters."""
-        # Only consider UP predictions
-        if pred.direction != "UP":
+        """Check if prediction passes all filters (both UP and DOWN)."""
+        # Skip NEUTRAL
+        if pred.direction == "NEUTRAL":
             return False
 
-        # Minimum confidence
+        # Minimum confidence (applies to both directions)
         if pred.confidence < self.min_confidence:
             return False
 
-        # Minimum probability
-        if pred.probability < self.min_probability:
+        # Minimum probability for the predicted direction
+        if pred.direction == "UP" and pred.prob_up < self.min_probability:
+            return False
+        if pred.direction == "DOWN" and pred.prob_down < self.min_probability:
             return False
 
         return True

@@ -54,8 +54,9 @@ class ModelTrainer:
         "min_child_weight": [1, 3],
     }
 
-    def __init__(self, feature_columns: list[str] = None):
+    def __init__(self, feature_columns: list[str] = None, num_classes: int = 3):
         self.feature_columns = feature_columns or FEATURE_COLUMNS
+        self.num_classes = num_classes
         self.model = None
         self.best_params = None
         self.metrics = None
@@ -93,21 +94,31 @@ class ModelTrainer:
         # Store weights for later use
         self.sample_weights = sample_weights
 
+        # Detect number of classes from data
+        self.num_classes = len(np.unique(y_train))
+
         logger.info(
             f"Training data",
             samples=len(X_train),
             features=len(self.feature_columns),
-            positive_pct=f"{y_train.mean()*100:.1f}%",
+            num_classes=self.num_classes,
             decay_weighted=sample_weights is not None,
         )
 
-        # Base model
+        # Base model — multiclass or binary
+        if self.num_classes > 2:
+            objective = "multi:softprob"
+            eval_metric = "mlogloss"
+        else:
+            objective = "binary:logistic"
+            eval_metric = "logloss"
+
         base_model = xgb.XGBClassifier(
-            objective="binary:logistic",
-            eval_metric="logloss",
-            use_label_encoder=False,
+            objective=objective,
+            eval_metric=eval_metric,
+            num_class=self.num_classes if self.num_classes > 2 else None,
             random_state=42,
-            n_jobs=-1
+            n_jobs=-1,
         )
 
         # Hyperparameter tuning with TimeSeriesSplit
@@ -116,13 +127,15 @@ class ModelTrainer:
 
         logger.info(f"Running GridSearchCV with {cv_splits} splits...")
 
+        scoring = "f1_weighted" if self.num_classes > 2 else "f1"
+
         grid_search = GridSearchCV(
             base_model,
             param_grid,
             cv=tscv,
-            scoring="f1",
+            scoring=scoring,
             n_jobs=-1,
-            verbose=1
+            verbose=1,
         )
 
         # Fit with sample weights if provided
@@ -139,11 +152,11 @@ class ModelTrainer:
         # Train final model with early stopping
         self.model = xgb.XGBClassifier(
             **self.best_params,
-            objective="binary:logistic",
-            eval_metric="logloss",
-            use_label_encoder=False,
+            objective=objective,
+            eval_metric=eval_metric,
+            num_class=self.num_classes if self.num_classes > 2 else None,
             random_state=42,
-            n_jobs=-1
+            n_jobs=-1,
         )
 
         # Fit with early stopping on test set (with weights if provided)
@@ -176,17 +189,30 @@ class ModelTrainer:
     def _evaluate(self, X_test: np.ndarray, y_test: np.ndarray) -> dict:
         """Evaluate model on test set."""
         y_pred = self.model.predict(X_test)
-        y_prob = self.model.predict_proba(X_test)[:, 1]
+        y_prob = self.model.predict_proba(X_test)
 
-        return {
+        avg = "weighted" if self.num_classes > 2 else "binary"
+
+        metrics = {
+            "num_classes": self.num_classes,
             "accuracy": accuracy_score(y_test, y_pred),
-            "precision": precision_score(y_test, y_pred, zero_division=0),
-            "recall": recall_score(y_test, y_pred, zero_division=0),
-            "f1": f1_score(y_test, y_pred, zero_division=0),
-            "auc": roc_auc_score(y_test, y_prob),
+            "precision": precision_score(y_test, y_pred, average=avg, zero_division=0),
+            "recall": recall_score(y_test, y_pred, average=avg, zero_division=0),
+            "f1": f1_score(y_test, y_pred, average=avg, zero_division=0),
             "confusion_matrix": confusion_matrix(y_test, y_pred).tolist(),
-            "classification_report": classification_report(y_test, y_pred, output_dict=True)
+            "classification_report": classification_report(y_test, y_pred, output_dict=True),
         }
+
+        # AUC — multiclass uses OVR
+        try:
+            if self.num_classes > 2:
+                metrics["auc"] = roc_auc_score(y_test, y_prob, multi_class="ovr", average="weighted")
+            else:
+                metrics["auc"] = roc_auc_score(y_test, y_prob[:, 1])
+        except ValueError:
+            metrics["auc"] = 0.0
+
+        return metrics
 
     def get_feature_importance(self) -> dict[str, float]:
         """Get feature importance from trained model."""
@@ -218,10 +244,11 @@ class ModelTrainer:
         bundle = {
             "model": self.model,
             "feature_columns": self.feature_columns,
+            "num_classes": self.num_classes,
             "best_params": self.best_params,
             "metrics": self.metrics,
             "feature_importance": self.get_feature_importance(),
-            "trained_at": datetime.now().isoformat()
+            "trained_at": datetime.now().isoformat(),
         }
 
         joblib.dump(bundle, path)
@@ -254,7 +281,10 @@ class ModelTrainer:
 
         bundle = joblib.load(path)
 
-        trainer = cls(feature_columns=bundle["feature_columns"])
+        trainer = cls(
+            feature_columns=bundle["feature_columns"],
+            num_classes=bundle.get("num_classes", 2),
+        )
         trainer.model = bundle["model"]
         trainer.best_params = bundle["best_params"]
         trainer.metrics = bundle["metrics"]
@@ -269,6 +299,7 @@ def train_and_save(
     threshold: float = 0.005,
     fast: bool = True,
     half_life_days: float = None,
+    num_classes: int = 3,
 ) -> dict:
     """
     Complete training pipeline: load data, train, save.
@@ -298,6 +329,7 @@ def train_and_save(
         lookahead=lookahead,
         threshold=threshold,
         half_life_days=half_life_days,
+        num_classes=num_classes,
     )
 
     # Train with weights
@@ -313,26 +345,28 @@ def train_and_save(
     model_path = trainer.save()
     results["model_path"] = model_path
 
-    # Store decay config in results
+    # Store config in results
     results["half_life_days"] = half_life_days
     results["decay_enabled"] = half_life_days is not None
+    results["num_classes"] = num_classes
 
     # Print summary
     print("\n" + "=" * 60)
     print("MODEL TRAINING COMPLETE")
     print("=" * 60)
 
+    print(f"\nModel type: {num_classes}-class ({'UP/NEUTRAL/DOWN' if num_classes == 3 else 'UP/DOWN'})")
+
     if half_life_days:
-        print(f"\nDecay Weighting: half-life = {half_life_days} days")
-        print(f"  (Recent data weighted higher than older data)")
+        print(f"Decay Weighting: half-life = {half_life_days} days")
     else:
-        print(f"\nDecay Weighting: disabled (equal weights)")
+        print(f"Decay Weighting: disabled")
 
     print(f"\nMetrics:")
     print(f"  Accuracy:  {results['metrics']['accuracy']:.3f}")
-    print(f"  Precision: {results['metrics']['precision']:.3f}")
-    print(f"  Recall:    {results['metrics']['recall']:.3f}")
-    print(f"  F1 Score:  {results['metrics']['f1']:.3f}")
+    print(f"  Precision: {results['metrics']['precision']:.3f} (weighted)")
+    print(f"  Recall:    {results['metrics']['recall']:.3f} (weighted)")
+    print(f"  F1 Score:  {results['metrics']['f1']:.3f} (weighted)")
     print(f"  AUC:       {results['metrics']['auc']:.3f}")
 
     print(f"\nFeature Importance (Top 10):")

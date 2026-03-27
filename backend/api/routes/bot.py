@@ -29,15 +29,10 @@ from backend.services.pipeline import (
     run_full_pipeline,
 )
 
+from backend.core.symbols import NIFTY_50
+
 logger = get_logger(__name__)
 router = APIRouter()
-
-# Default symbols (NIFTY 50 subset)
-DEFAULT_SYMBOLS = [
-    "RELIANCE", "INFY", "TCS", "HDFCBANK", "ICICIBANK",
-    "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT",
-    "HINDUNILVR", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
-]
 
 
 @router.get("/status", response_model=BotStatusResponse)
@@ -134,7 +129,7 @@ async def start_bot(
             detail="ML model not found. Call /bot/prepare first.",
         )
 
-    symbols = request.symbols or DEFAULT_SYMBOLS
+    symbols = request.symbols or NIFTY_50
 
     try:
         # Create execution engine
@@ -233,17 +228,44 @@ async def get_risk_status(state: AuthRequiredDep):
 
     risk = state.engine.risk_guardian.get_status()
 
-    return RiskStatus(
-        circuit_breaker_triggered=risk["circuit_breaker_triggered"],
-        circuit_breaker_reason=risk.get("circuit_breaker_reason"),
-        trades_today=risk["trades_today"],
-        max_trades=risk["max_trades"],
-        daily_pnl=risk["daily_pnl"],
-        daily_loss_limit=risk["daily_loss_limit"],
-        current_exposure=risk["current_exposure"],
-        max_exposure=risk["max_exposure"],
-        risk_score=risk["risk_score"],
-    )
+    return RiskStatus(**risk)
+
+
+@router.get("/watchlist")
+async def get_hot_watchlist(state: AppStateDep):
+    """
+    Get Tier 1 (hot) watchlist — stocks being scanned every 2 minutes.
+    """
+    if not state.engine:
+        return {"watchlist": [], "tier1_count": 0, "total_symbols": 0}
+
+    watchlist = state.engine.get_hot_watchlist()
+
+    return {
+        "watchlist": watchlist,
+        "tier1_count": len(watchlist),
+        "total_symbols": len(state.engine.symbols),
+    }
+
+
+@router.post("/shorting")
+async def toggle_shorting(state: AuthRequiredDep, enabled: bool = True):
+    """
+    Enable or disable short selling.
+    """
+    if not state.engine:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bot not started",
+        )
+
+    state.engine.risk_guardian.set_shorting_enabled(enabled)
+
+    return {
+        "success": True,
+        "shorting_enabled": enabled,
+        "message": f"Shorting {'enabled' if enabled else 'disabled'}",
+    }
 
 
 @router.get("/pipeline")

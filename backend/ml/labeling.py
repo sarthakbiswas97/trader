@@ -75,19 +75,23 @@ def create_labels(
     df: pd.DataFrame,
     lookahead: int = 6,
     threshold: float = 0.005,
-    price_col: str = "close"
+    price_col: str = "close",
+    num_classes: int = 3,
 ) -> pd.DataFrame:
     """
-    Create binary labels based on future price movement.
+    Create classification labels based on future price movement.
 
     Args:
         df: DataFrame with OHLCV + features
         lookahead: Number of candles to look ahead (6 = 30 min for 5-min data)
-        threshold: Minimum price change to be considered UP (0.5% = 0.005)
+        threshold: Minimum price change for UP/DOWN (0.5% = 0.005)
         price_col: Column to use for price
+        num_classes: 2 for binary (UP/DOWN), 3 for UP/NEUTRAL/DOWN
 
     Returns:
-        DataFrame with added 'target' column (1 = UP, 0 = DOWN/FLAT)
+        DataFrame with 'target' column:
+            3-class: 0 = DOWN, 1 = NEUTRAL, 2 = UP
+            2-class: 0 = DOWN/FLAT, 1 = UP
     """
     df = df.copy()
 
@@ -96,22 +100,44 @@ def create_labels(
     current_price = df[price_col]
     future_return = (future_price - current_price) / current_price
 
-    # Create binary label
-    # 1 = price goes up by at least threshold
-    # 0 = price stays flat or goes down
-    df["target"] = (future_return >= threshold).astype(int)
     df["future_return"] = future_return
 
-    # Drop rows where we can't compute future return
-    df = df.dropna(subset=["target"])
+    if num_classes == 3:
+        # 3-class: DOWN (0), NEUTRAL (1), UP (2)
+        conditions = [
+            future_return <= -threshold,  # DOWN: drops >= threshold
+            future_return >= threshold,   # UP: rises >= threshold
+        ]
+        choices = [0, 2]
+        df["target"] = np.select(conditions, choices, default=1)  # default = NEUTRAL
 
-    logger.info(
-        f"Created labels",
-        total=len(df),
-        positive=df["target"].sum(),
-        negative=(df["target"] == 0).sum(),
-        pct_positive=f"{df['target'].mean()*100:.1f}%"
-    )
+        # Drop rows where we can't compute future return
+        df = df.dropna(subset=["future_return"])
+
+        up_count = (df["target"] == 2).sum()
+        neutral_count = (df["target"] == 1).sum()
+        down_count = (df["target"] == 0).sum()
+        total = len(df)
+
+        logger.info(
+            "Created 3-class labels",
+            total=total,
+            up=f"{up_count} ({up_count/total*100:.1f}%)",
+            neutral=f"{neutral_count} ({neutral_count/total*100:.1f}%)",
+            down=f"{down_count} ({down_count/total*100:.1f}%)",
+        )
+    else:
+        # 2-class: DOWN/FLAT (0), UP (1) — original behavior
+        df["target"] = (future_return >= threshold).astype(int)
+        df = df.dropna(subset=["target"])
+
+        logger.info(
+            "Created 2-class labels",
+            total=len(df),
+            positive=int(df["target"].sum()),
+            negative=int((df["target"] == 0).sum()),
+            pct_positive=f"{df['target'].mean()*100:.1f}%",
+        )
 
     return df
 
@@ -148,6 +174,7 @@ def prepare_training_data(
     threshold: float = 0.005,
     train_ratio: float = 0.8,
     half_life_days: float = None,
+    num_classes: int = 3,
 ) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray | None]:
     """
     Load features and prepare train/test splits.
@@ -159,9 +186,7 @@ def prepare_training_data(
         threshold: Min return for positive label
         train_ratio: Fraction of data for training
         half_life_days: If set, calculate decay weights for training data
-            - 30: aggressive (focus on last month)
-            - 45: moderate (recommended for intraday)
-            - 60: gentle (more historical context)
+        num_classes: 2 for binary, 3 for UP/NEUTRAL/DOWN
 
     Returns:
         (train_df, test_df, train_weights)
@@ -175,7 +200,7 @@ def prepare_training_data(
     df = df.sort_values("timestamp").reset_index(drop=True)
 
     # Create labels
-    df = create_labels(df, lookahead=lookahead, threshold=threshold)
+    df = create_labels(df, lookahead=lookahead, threshold=threshold, num_classes=num_classes)
 
     # Time-based split
     split_idx = int(len(df) * train_ratio)

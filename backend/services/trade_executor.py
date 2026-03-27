@@ -83,7 +83,7 @@ class TradeExecutor:
         available_capital: float,
     ) -> list[TradeResult]:
         """
-        Execute entry orders for ranked stocks.
+        Execute entry orders for ranked stocks (both long and short).
 
         Args:
             ranked_stocks: Stocks ranked by signal quality
@@ -100,11 +100,19 @@ class TradeExecutor:
                 logger.debug(f"Already holding {stock.symbol}, skipping")
                 continue
 
+            # Determine direction
+            is_short = stock.prediction.is_short_signal
+            is_long = stock.prediction.is_long_signal
+
+            if not is_short and not is_long:
+                continue  # NEUTRAL — skip
+
             # Validate with risk guardian
             risk_check = self.risk.validate_entry(
                 symbol=stock.symbol,
                 prediction=stock.prediction,
                 capital=available_capital,
+                is_short=is_short,
             )
 
             if not risk_check.passed:
@@ -115,7 +123,7 @@ class TradeExecutor:
                 results.append(TradeResult(
                     success=False,
                     symbol=stock.symbol,
-                    side="BUY",
+                    side="SHORT" if is_short else "BUY",
                     quantity=0,
                     price=0,
                     order_id="",
@@ -134,20 +142,26 @@ class TradeExecutor:
                 logger.info(f"Position size too small for {stock.symbol}")
                 continue
 
-            # Execute buy order
-            result = self._execute_buy(
-                symbol=stock.symbol,
-                quantity=quantity,
-                prediction=stock.prediction,
-                entry_reason=f"ML signal (score: {stock.score:.1f})",
-            )
+            # Execute order
+            if is_short:
+                result = self._execute_short_entry(
+                    symbol=stock.symbol,
+                    quantity=quantity,
+                    prediction=stock.prediction,
+                    entry_reason=f"SHORT signal (score: {stock.score:.1f})",
+                )
+            else:
+                result = self._execute_buy(
+                    symbol=stock.symbol,
+                    quantity=quantity,
+                    prediction=stock.prediction,
+                    entry_reason=f"LONG signal (score: {stock.score:.1f})",
+                )
 
             results.append(result)
 
             if result.success:
-                # Update available capital
                 available_capital -= result.price * result.quantity
-                # Record trade with risk guardian
                 self.risk.record_trade()
 
         return results
@@ -272,42 +286,119 @@ class TradeExecutor:
         self._trade_history.append(result)
         return result
 
+    def _execute_short_entry(
+        self,
+        symbol: str,
+        quantity: int,
+        prediction: Prediction,
+        entry_reason: str,
+    ) -> TradeResult:
+        """Execute a short entry (SELL first)."""
+        order = Order(
+            symbol=symbol,
+            quantity=quantity,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            product=ProductType.MIS,
+        )
+
+        try:
+            response = self.broker.place_order(order)
+
+            if response.status == OrderStatus.EXECUTED:
+                self.positions.open_position(
+                    symbol=symbol,
+                    quantity=quantity,
+                    entry_price=response.executed_price or 0,
+                    prediction=prediction,
+                    is_short=True,
+                    entry_reason=entry_reason,
+                    stop_loss_pct=self.risk.config.short_stop_loss_pct,
+                    target_pct=self.risk.config.short_take_profit_pct,
+                )
+
+                result = TradeResult(
+                    success=True,
+                    symbol=symbol,
+                    side="SHORT",
+                    quantity=quantity,
+                    price=response.executed_price or 0,
+                    order_id=response.order_id,
+                    message="Short entry executed",
+                    timestamp=now_ist(),
+                )
+                logger.info("Short entry executed", symbol=symbol, quantity=quantity, price=response.executed_price)
+            else:
+                result = TradeResult(
+                    success=False,
+                    symbol=symbol,
+                    side="SHORT",
+                    quantity=quantity,
+                    price=0,
+                    order_id=response.order_id,
+                    message=f"Order {response.status.value}: {response.message}",
+                    timestamp=now_ist(),
+                )
+
+        except OrderExecutionError as e:
+            result = TradeResult(
+                success=False, symbol=symbol, side="SHORT",
+                quantity=quantity, price=0, order_id="",
+                message=str(e), timestamp=now_ist(),
+            )
+            logger.error(f"Short entry failed for {symbol}: {e}")
+
+        self._trade_history.append(result)
+        return result
+
     def check_and_execute_exits(
         self,
         predictions: dict[str, Prediction] = None,
     ) -> list[TradeResult]:
         """
-        Check exit conditions and execute sell orders.
-
-        Args:
-            predictions: Latest predictions (for signal reversal check)
-
-        Returns:
-            List of TradeResult for exit trades
+        Check exit conditions and execute exit orders.
+        Handles both long exits (sell) and short covers (buy).
         """
         results = []
         predictions = predictions or {}
 
         for position in self.positions.get_positions_for_exit_check():
-            should_exit, reason = self.risk.check_exit_conditions(
-                self.broker.get_positions()[0]  # Get fresh position data
-                if self.positions.has_position(position.symbol)
-                else position
-            )
+            # Build a broker-compatible Position for risk check
+            broker_positions = {p.symbol: p for p in self.broker.get_positions()}
+            broker_pos = broker_positions.get(position.symbol)
 
-            # Also check signal reversal
+            if broker_pos:
+                should_exit, reason = self.risk.check_exit_conditions(
+                    broker_pos,
+                    is_short=position.is_short,
+                    holding_minutes=position.holding_time_minutes,
+                )
+            else:
+                should_exit, reason = False, ""
+
+            # Signal reversal check
             if not should_exit and position.symbol in predictions:
                 pred = predictions[position.symbol]
-                if pred.direction == "DOWN" and pred.confidence >= 0.5:
+                if position.is_short and pred.direction == "UP" and pred.confidence >= 0.2:
+                    should_exit = True
+                    reason = "signal_reversal"
+                elif not position.is_short and pred.direction == "DOWN" and pred.confidence >= 0.2:
                     should_exit = True
                     reason = "signal_reversal"
 
             if should_exit:
-                result = self._execute_sell(
-                    symbol=position.symbol,
-                    quantity=position.quantity,
-                    exit_reason=reason,
-                )
+                if position.is_short:
+                    result = self._execute_short_cover(
+                        symbol=position.symbol,
+                        quantity=position.quantity,
+                        exit_reason=reason,
+                    )
+                else:
+                    result = self._execute_sell(
+                        symbol=position.symbol,
+                        quantity=position.quantity,
+                        exit_reason=reason,
+                    )
                 results.append(result)
 
         return results
@@ -390,9 +481,72 @@ class TradeExecutor:
         self._trade_history.append(result)
         return result
 
+    def _execute_short_cover(
+        self,
+        symbol: str,
+        quantity: int,
+        exit_reason: str,
+    ) -> TradeResult:
+        """Cover a short position (BUY to close)."""
+        order = Order(
+            symbol=symbol,
+            quantity=quantity,
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            product=ProductType.MIS,
+        )
+
+        try:
+            response = self.broker.place_order(order)
+
+            if response.status == OrderStatus.EXECUTED:
+                trade_summary = self.positions.close_position(
+                    symbol=symbol,
+                    exit_price=response.executed_price or 0,
+                    exit_reason=exit_reason,
+                )
+
+                if trade_summary:
+                    self.risk.record_trade(pnl=trade_summary["pnl"])
+
+                result = TradeResult(
+                    success=True,
+                    symbol=symbol,
+                    side="COVER",
+                    quantity=quantity,
+                    price=response.executed_price or 0,
+                    order_id=response.order_id,
+                    message=f"Short covered: {exit_reason}",
+                    timestamp=now_ist(),
+                )
+                logger.info(
+                    "Short cover executed",
+                    symbol=symbol, quantity=quantity,
+                    price=response.executed_price, reason=exit_reason,
+                    pnl=trade_summary["pnl"] if trade_summary else 0,
+                )
+            else:
+                result = TradeResult(
+                    success=False, symbol=symbol, side="COVER",
+                    quantity=quantity, price=0, order_id=response.order_id,
+                    message=f"Order {response.status.value}: {response.message}",
+                    timestamp=now_ist(),
+                )
+
+        except OrderExecutionError as e:
+            result = TradeResult(
+                success=False, symbol=symbol, side="COVER",
+                quantity=quantity, price=0, order_id="",
+                message=str(e), timestamp=now_ist(),
+            )
+            logger.error(f"Short cover failed for {symbol}: {e}")
+
+        self._trade_history.append(result)
+        return result
+
     def square_off_all(self) -> list[TradeResult]:
         """
-        Square off all open positions.
+        Square off all open positions (both long and short).
         Used at end of day or when circuit breaker triggers.
 
         Returns:
@@ -401,11 +555,18 @@ class TradeExecutor:
         results = []
 
         for position in self.positions.get_all_positions():
-            result = self._execute_sell(
-                symbol=position.symbol,
-                quantity=position.quantity,
-                exit_reason="manual_square_off",
-            )
+            if position.is_short:
+                result = self._execute_short_cover(
+                    symbol=position.symbol,
+                    quantity=position.quantity,
+                    exit_reason="manual_square_off",
+                )
+            else:
+                result = self._execute_sell(
+                    symbol=position.symbol,
+                    quantity=position.quantity,
+                    exit_reason="manual_square_off",
+                )
             results.append(result)
 
         return results

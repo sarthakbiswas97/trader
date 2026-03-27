@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from backend.core.logger import get_logger
+from backend.core.symbols import NIFTY_50
 from backend.ml.labeling import DEFAULT_FEATURES_PATH
 
 logger = get_logger(__name__)
@@ -98,12 +99,8 @@ MODEL_PATH = MODEL_DIR / "model_latest.joblib"
 DATA_DIR = _BACKEND_DIR / "data" / "historical"
 FEATURES_PATH = Path(DEFAULT_FEATURES_PATH)
 
-# Symbols to download/train on
-DEFAULT_SYMBOLS = [
-    "RELIANCE", "INFY", "TCS", "HDFCBANK", "ICICIBANK",
-    "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT",
-    "HINDUNILVR", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
-]
+
+
 
 # Model is stale after this many days
 MODEL_MAX_AGE_DAYS = 7
@@ -132,7 +129,7 @@ def model_is_stale(max_age_days: float = MODEL_MAX_AGE_DAYS) -> bool:
 
 def has_historical_data(symbols: list[str] = None) -> bool:
     """Check if we have downloaded historical data."""
-    symbols = symbols or DEFAULT_SYMBOLS
+    symbols = symbols or NIFTY_50
     if not DATA_DIR.exists():
         return False
     # Check if at least half the symbols have 5m data
@@ -169,7 +166,7 @@ def run_download(kite, symbols: list[str] = None) -> bool:
     Returns:
         True if successful
     """
-    symbols = symbols or DEFAULT_SYMBOLS
+    symbols = symbols or NIFTY_50
 
     from backend.services.historical_data import HistoricalDataService
 
@@ -201,7 +198,7 @@ def run_feature_generation(symbols: list[str] = None) -> bool:
     Returns:
         True if successful
     """
-    symbols = symbols or DEFAULT_SYMBOLS
+    symbols = symbols or NIFTY_50
 
     from backend.services.feature_engine import FeatureEngine
     from backend.services.historical_data import HistoricalDataService
@@ -223,7 +220,7 @@ def run_feature_generation(symbols: list[str] = None) -> bool:
         return False
 
 
-def run_training(half_life_days: float = 45.0) -> bool:
+def run_training(half_life_days: float = 45.0, num_classes: int = 3) -> bool:
     """
     Train ML model on generated features.
 
@@ -241,6 +238,7 @@ def run_training(half_life_days: float = 45.0) -> bool:
         results = train_and_save(
             features_path=DEFAULT_FEATURES_PATH,
             half_life_days=half_life_days,
+            num_classes=num_classes,
         )
         logger.info(
             "Training complete",
@@ -273,7 +271,7 @@ def run_full_pipeline(
     Returns:
         Dict with status of each step
     """
-    symbols = symbols or DEFAULT_SYMBOLS
+    symbols = symbols or NIFTY_50
     results = {
         "download": "skipped",
         "features": "skipped",

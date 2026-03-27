@@ -24,19 +24,25 @@ class ManagedPosition:
     entry_time: datetime
     prediction: Prediction
     entry_reason: str
+    is_short: bool = False
     target_price: float | None = None
     stop_loss_price: float | None = None
     current_price: float = 0.0
-    peak_price: float = 0.0  # For trailing stop
+    peak_price: float = 0.0
 
     @property
     def pnl(self) -> float:
+        if self.is_short:
+            # Short: profit when price goes DOWN
+            return (self.entry_price - self.current_price) * self.quantity
         return (self.current_price - self.entry_price) * self.quantity
 
     @property
     def pnl_percent(self) -> float:
         if self.entry_price == 0:
             return 0.0
+        if self.is_short:
+            return ((self.entry_price - self.current_price) / self.entry_price) * 100
         return ((self.current_price - self.entry_price) / self.entry_price) * 100
 
     @property
@@ -47,10 +53,16 @@ class ManagedPosition:
     def holding_time_minutes(self) -> float:
         return self.holding_time_seconds / 60
 
+    @property
+    def side(self) -> str:
+        return "SHORT" if self.is_short else "LONG"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "symbol": self.symbol,
             "quantity": self.quantity,
+            "side": self.side,
+            "is_short": self.is_short,
             "entry_price": self.entry_price,
             "entry_time": self.entry_time.isoformat(),
             "current_price": self.current_price,
@@ -121,9 +133,10 @@ class PositionManager:
         quantity: int,
         entry_price: float,
         prediction: Prediction,
+        is_short: bool = False,
         entry_reason: str = "ML signal",
-        stop_loss_pct: float = 0.02,  # 2% default
-        target_pct: float = 0.02,     # 2% default
+        stop_loss_pct: float = 0.02,
+        target_pct: float = 0.02,
     ) -> ManagedPosition:
         """
         Record a new position.
@@ -133,15 +146,20 @@ class PositionManager:
             quantity: Number of shares
             entry_price: Entry price
             prediction: ML prediction that triggered entry
+            is_short: True for short position
             entry_reason: Human-readable reason
-            stop_loss_pct: Stop loss as fraction (0.02 = 2%)
+            stop_loss_pct: Stop loss as fraction
             target_pct: Target profit as fraction
-
-        Returns:
-            ManagedPosition object
         """
-        stop_loss_price = entry_price * (1 - stop_loss_pct)
-        target_price = entry_price * (1 + target_pct)
+        if is_short:
+            # Short: stop-loss is ABOVE entry, target is BELOW
+            stop_loss_price = entry_price * (1 + stop_loss_pct)
+            target_price = entry_price * (1 - target_pct)
+        else:
+            stop_loss_price = entry_price * (1 - stop_loss_pct)
+            target_price = entry_price * (1 + target_pct)
+
+        side = "SHORT" if is_short else "LONG"
 
         position = ManagedPosition(
             symbol=symbol,
@@ -149,6 +167,7 @@ class PositionManager:
             entry_price=entry_price,
             entry_time=now_ist(),
             prediction=prediction,
+            is_short=is_short,
             entry_reason=entry_reason,
             target_price=target_price,
             stop_loss_price=stop_loss_price,
@@ -161,11 +180,11 @@ class PositionManager:
         logger.info(
             "Position opened",
             symbol=symbol,
+            side=side,
             quantity=quantity,
             entry_price=entry_price,
             stop_loss=stop_loss_price,
             target=target_price,
-            confidence=prediction.confidence,
         )
 
         return position

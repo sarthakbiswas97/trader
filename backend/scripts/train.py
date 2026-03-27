@@ -23,7 +23,8 @@ from backend.services.feature_engine import FEATURE_COLUMNS
 
 def main():
     parser = argparse.ArgumentParser(description="Train ML model")
-    parser.add_argument("--features", default="data/training/features.csv",
+    from backend.ml.labeling import DEFAULT_FEATURES_PATH as _dfp
+    parser.add_argument("--features", default=_dfp,
                         help="Path to features CSV")
     parser.add_argument("--lookahead", type=int, default=6,
                         help="Candles to look ahead (6 = 30min for 5m data)")
@@ -34,6 +35,8 @@ def main():
     parser.add_argument("--half-life", type=float, default=45,
                         help="Decay half-life in days (default: 45). "
                              "Recent data weighted higher. Use 0 to disable.")
+    parser.add_argument("--classes", type=int, default=3, choices=[2, 3],
+                        help="Number of classes: 2 (UP/DOWN) or 3 (UP/NEUTRAL/DOWN)")
     args = parser.parse_args()
 
     # Convert 0 to None (disable decay)
@@ -55,6 +58,7 @@ def main():
     print(f"  Threshold: {args.threshold * 100:.1f}%")
     print(f"  Mode: {'Full search' if args.full else 'Fast search'}")
     print(f"  Feature count: {len(FEATURE_COLUMNS)}")
+    print(f"  Classes: {args.classes} ({'UP/NEUTRAL/DOWN' if args.classes == 3 else 'UP/DOWN'})")
     if half_life:
         print(f"  Decay half-life: {half_life} days (recent data weighted higher)")
     else:
@@ -69,6 +73,7 @@ def main():
         lookahead=args.lookahead,
         threshold=args.threshold,
         half_life_days=half_life,
+        num_classes=args.classes,
     )
 
     if train_weights is not None:
@@ -82,10 +87,14 @@ def main():
 
     # Class distribution
     print(f"\nClass distribution:")
-    print(f"  Training - UP: {train_df['target'].sum():,} ({train_df['target'].mean()*100:.1f}%)")
-    print(f"  Training - DOWN: {(train_df['target']==0).sum():,} ({(1-train_df['target'].mean())*100:.1f}%)")
-    print(f"  Test - UP: {test_df['target'].sum():,} ({test_df['target'].mean()*100:.1f}%)")
-    print(f"  Test - DOWN: {(test_df['target']==0).sum():,} ({(1-test_df['target'].mean())*100:.1f}%)")
+    if args.classes == 3:
+        for label, name in [(2, "UP"), (1, "NEUTRAL"), (0, "DOWN")]:
+            train_count = (train_df["target"] == label).sum()
+            test_count = (test_df["target"] == label).sum()
+            print(f"  {name:8} - Train: {train_count:,} ({train_count/len(train_df)*100:.1f}%)  Test: {test_count:,} ({test_count/len(test_df)*100:.1f}%)")
+    else:
+        print(f"  Training - UP: {train_df['target'].sum():,} ({train_df['target'].mean()*100:.1f}%)")
+        print(f"  Training - DOWN: {(train_df['target']==0).sum():,} ({(1-train_df['target'].mean())*100:.1f}%)")
 
     print("\n" + "-" * 60)
     print("Training model...")
@@ -98,6 +107,7 @@ def main():
             threshold=args.threshold,
             fast=not args.full,
             half_life_days=half_life,
+            num_classes=args.classes,
         )
 
         # Show confusion matrix

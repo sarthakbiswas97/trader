@@ -2,11 +2,14 @@
 Predictions Routes.
 
 Generate and view ML predictions.
+Supports both batch (POST) and streaming (SSE) generation.
 """
 
+import json
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
 
 from backend.api.dependencies import AppStateDep, AuthRequiredDep, PredictionServiceDep
 from backend.api.schemas import (
@@ -15,18 +18,13 @@ from backend.api.schemas import (
     PredictionsResponse,
 )
 from backend.core.logger import get_logger
+from backend.core.symbols import NIFTY_50
 from backend.services.feature_engine import FeatureEngine
 from backend.services.historical_data import HistoricalDataService
 from backend.utils.time_utils import now_ist
 
 logger = get_logger(__name__)
 router = APIRouter()
-
-# Default symbols for predictions
-DEFAULT_SYMBOLS = [
-    "RELIANCE", "INFY", "TCS", "HDFCBANK", "ICICIBANK",
-    "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT",
-]
 
 
 @router.post("/generate", response_model=PredictionsResponse)
@@ -40,7 +38,7 @@ async def generate_predictions(
 
     This fetches latest market data and computes ML predictions.
     """
-    symbols = request.symbols or DEFAULT_SYMBOLS[:request.limit]
+    symbols = request.symbols or NIFTY_50
     broker = state.broker
 
     # Initialize services
@@ -111,6 +109,122 @@ async def generate_predictions(
     )
 
 
+@router.get("/stream")
+async def stream_predictions(state: AuthRequiredDep):
+    """
+    Stream predictions via Server-Sent Events.
+
+    Each prediction is sent as it's computed (~1 per second).
+    Frontend uses EventSource to receive them one-by-one.
+
+    Events:
+      - "prediction": Individual prediction result
+      - "progress": Progress update (X/total)
+      - "done": Stream complete with summary
+      - "error": Error for a specific symbol
+    """
+    from backend.api.dependencies import get_prediction_service
+
+    try:
+        prediction_service = get_prediction_service(state)
+    except HTTPException:
+        async def error_stream():
+            yield f"event: error\ndata: {json.dumps({'error': 'ML model not found'})}\n\n"
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+    broker = state.broker
+    symbols = NIFTY_50
+
+    data_service = HistoricalDataService()
+    if hasattr(broker, "_kite") and broker._kite:
+        data_service.set_kite(broker._kite)
+
+    feature_engine = FeatureEngine(data_service=data_service)
+
+    async def event_stream():
+        total = len(symbols)
+        completed = 0
+        up_count = 0
+        down_count = 0
+        neutral_count = 0
+
+        for i, symbol in enumerate(symbols):
+            try:
+                # Progress event
+                yield f"event: progress\ndata: {json.dumps({'current': i + 1, 'total': total, 'symbol': symbol})}\n\n"
+
+                # Fetch and compute
+                end_date = now_ist()
+                start_date = end_date - timedelta(days=5)
+
+                df = data_service.fetch_candles(
+                    symbol=symbol,
+                    interval="5m",
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+
+                if df.empty or len(df) < 100:
+                    yield f"event: error\ndata: {json.dumps({'symbol': symbol, 'error': 'Insufficient data'})}\n\n"
+                    continue
+
+                features = feature_engine.get_latest_features(symbol, df)
+                if features is None:
+                    yield f"event: error\ndata: {json.dumps({'symbol': symbol, 'error': 'Feature computation failed'})}\n\n"
+                    continue
+
+                pred = prediction_service.predict(features)
+                completed += 1
+
+                if pred.direction == "UP":
+                    up_count += 1
+                elif pred.direction == "DOWN":
+                    down_count += 1
+                else:
+                    neutral_count += 1
+
+                # Send prediction event
+                prediction_data = {
+                    "symbol": pred.symbol,
+                    "direction": pred.direction,
+                    "probability": round(pred.probability, 4),
+                    "confidence": round(pred.confidence, 4),
+                    "prob_up": round(pred.prob_up, 4),
+                    "prob_down": round(pred.prob_down, 4),
+                    "prob_neutral": round(pred.prob_neutral, 4),
+                    "should_trade": pred.should_trade,
+                    "is_long_signal": pred.is_long_signal,
+                    "is_short_signal": pred.is_short_signal,
+                    "timestamp": pred.timestamp.isoformat() if pred.timestamp else None,
+                    "top_features": [(n, round(float(v), 4)) for n, v in pred.top_features[:3]],
+                }
+                yield f"event: prediction\ndata: {json.dumps(prediction_data)}\n\n"
+
+            except Exception as e:
+                logger.error(f"Stream prediction failed for {symbol}: {e}")
+                yield f"event: error\ndata: {json.dumps({'symbol': symbol, 'error': str(e)})}\n\n"
+
+        # Done event with summary
+        summary = {
+            "symbols_analyzed": completed,
+            "up_signals": up_count,
+            "down_signals": down_count,
+            "neutral_signals": neutral_count,
+            "generated_at": datetime.now().isoformat(),
+        }
+        yield f"event: done\ndata: {json.dumps(summary)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/latest", response_model=PredictionsResponse)
 async def get_latest_predictions(state: AppStateDep):
     """
@@ -147,19 +261,7 @@ async def get_available_symbols(state: AuthRequiredDep):
     """
     Get list of available symbols for prediction.
     """
-    # Return default NIFTY 50 symbols
-    symbols = [
-        "RELIANCE", "INFY", "TCS", "HDFCBANK", "ICICIBANK",
-        "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT",
-        "HINDUNILVR", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
-        "TITAN", "SUNPHARMA", "ULTRACEMCO", "NESTLEIND", "WIPRO",
-        "HCLTECH", "POWERGRID", "NTPC", "TECHM", "M&M",
-        "BAJAJFINSV", "ONGC", "ADANIENT", "ADANIPORTS", "COALINDIA",
-        "JSWSTEEL", "TATASTEEL", "GRASIM", "INDUSINDBK", "BRITANNIA",
-        "CIPLA", "DRREDDY", "DIVISLAB", "EICHERMOT", "HEROMOTOCO",
-        "BPCL", "APOLLOHOSP", "SBILIFE", "TATACONSUM", "HINDALCO",
-        "BAJAJ-AUTO", "UPL", "SHREECEM",
-    ]
+    symbols = NIFTY_50
 
     return {
         "symbols": symbols,

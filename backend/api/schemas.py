@@ -213,9 +213,14 @@ class RiskStatus(BaseModel):
     max_trades: int
     daily_pnl: float
     daily_loss_limit: float
-    current_exposure: float
-    max_exposure: float
+    long_exposure: float
+    max_long_exposure: float
+    short_exposure: float
+    max_short_exposure: float
+    total_exposure: float
+    max_total_exposure: float
     risk_score: float
+    shorting_enabled: bool
 
 
 # =============================================================================
