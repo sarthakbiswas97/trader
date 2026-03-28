@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+import math
 import numpy as np
 import pandas as pd
 
@@ -19,8 +20,8 @@ from backend.services.backtester import ZerodhaCosts, BacktestTrade
 from backend.services.historical_data import HistoricalDataService
 from backend.strategies.breakout.detector import BreakoutDetector, Setup
 from backend.strategies.breakout.filters import filter_setups
-from backend.strategies.breakout.ranker import rank_setups
 from backend.strategies.breakout.market_regime import MarketRegime
+from backend.strategies.breakout.scorer import SetupScorer, SCORER_PATH
 
 logger = get_logger(__name__)
 
@@ -68,6 +69,8 @@ class BreakoutBacktester:
         self.costs = ZerodhaCosts()
         self.detector = BreakoutDetector()
         self.market_regime = MarketRegime()
+        self.scorer = SetupScorer() if SCORER_PATH.exists() else None
+        self.ml_threshold = 0.5  # Min ML score to trade
         self.trades: list[BacktestTrade] = []
         self.equity_curve: list[dict] = []
         self._positions: dict[str, dict] = {}
@@ -269,10 +272,47 @@ class BreakoutBacktester:
                         elif s.direction == "SHORT" and allow_shorts:
                             direction_filtered.append(s)
 
-                    ranked = rank_setups(direction_filtered, max_trades=1)
+                    if not direction_filtered:
+                        continue
 
-                    if ranked:
-                        self._enter_position(ranked[0], row)
+                    # ML scoring: pick best setup by predicted follow-through probability
+                    if self.scorer:
+                        regime_info = self.market_regime.get_info(today)
+                        best_setup = None
+                        best_score = 0
+
+                        for s in direction_filtered:
+                            features = {
+                                "breakout_strength": abs(s.trigger_price - s.reference_level) / s.reference_level if s.reference_level > 0 else 0,
+                                "volume_ratio": s.volume_ratio if not np.isnan(s.volume_ratio) else 1.0,
+                                "candle_strength": s.candle_strength,
+                                "consolidation_tightness": s.consolidation_tightness,
+                                "atr_pct": s.atr / s.trigger_price if s.trigger_price > 0 else 0,
+                                "market_adx": regime_info.get("adx", 0),
+                                "market_trend_strength": regime_info.get("trend_strength", 0),
+                                "direction_aligned": 1 if (
+                                    (s.direction == "LONG" and regime_info.get("direction") == "UP") or
+                                    (s.direction == "SHORT" and regime_info.get("direction") == "DOWN")
+                                ) else 0,
+                                "hour": ts.hour if hasattr(ts, "hour") else 10,
+                                "is_opening": 1 if s.setup_type == "opening" else 0,
+                                "is_short": 1 if s.direction == "SHORT" else 0,
+                                "score": s.score,
+                            }
+
+                            ml_score = self.scorer.score(features)
+                            if ml_score > best_score:
+                                best_score = ml_score
+                                best_setup = s
+
+                        if best_setup and best_score >= self.ml_threshold:
+                            self._enter_position(best_setup, row)
+                    else:
+                        # No scorer — use rule-based ranking
+                        from backend.strategies.breakout.ranker import rank_setups
+                        ranked = rank_setups(direction_filtered, max_trades=1)
+                        if ranked:
+                            self._enter_position(ranked[0], row)
 
         # Force close remaining positions at end of day
         for symbol in list(self._positions.keys()):
