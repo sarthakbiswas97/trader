@@ -44,6 +44,21 @@ bot: ## Run trading bot (paper mode)
 bot-test: ## Run single test cycle
 	. backend/.venv/bin/activate && python3 backend/scripts/run_bot.py --test
 
+backtest: ## Run backtest (long + short)
+	. backend/.venv/bin/activate && python3 backend/scripts/backtest.py
+
+backtest-compare: ## Run backtest comparing long-only vs long+short
+	. backend/.venv/bin/activate && python3 backend/scripts/backtest.py --compare
+
+backtest-long: ## Run backtest (long only)
+	. backend/.venv/bin/activate && python3 backend/scripts/backtest.py --long-only
+
+sweep: ## Run TP/SL parameter sweep
+	. backend/.venv/bin/activate && python3 backend/scripts/sweep.py
+
+robustness: ## Run rolling window robustness test
+	. backend/.venv/bin/activate && python3 backend/scripts/robustness.py
+
 # =============================================================================
 # Build & Clean
 # =============================================================================

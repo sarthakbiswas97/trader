@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backtest Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e5e5e5; padding: 24px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  h2 { font-size: 16px; margin: 24px 0 12px; color: #a3a3a3; }
+  .subtitle { font-size: 13px; color: #737373; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card { background: #171717; border: 1px solid #262626; border-radius: 8px; padding: 14px; }
+  .card-label { font-size: 11px; color: #737373; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card-value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .profit { color: #22c55e; }
+  .loss { color: #ef4444; }
+  .chart-container { background: #171717; border: 1px solid #262626; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; padding: 8px 12px; background: #171717; border-bottom: 1px solid #262626; color: #737373; font-weight: 500; }
+  td { padding: 6px 12px; border-bottom: 1px solid #1a1a1a; }
+  .table-container { background: #171717; border: 1px solid #262626; border-radius: 8px; overflow: hidden; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+<h1>Backtest Report</h1>
+<p class="subtitle">Mode: Long + Short | Generated: 2026-03-27 23:50</p>
+
+<div class="grid">
+  <div class="card">
+    <div class="card-label">Total P&L</div>
+    <div class="card-value profit">₹102</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Return</div>
+    <div class="card-value profit">0.10%</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Total Trades</div>
+    <div class="card-value">41</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Win Rate</div>
+    <div class="card-value">43.9%</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Profit Factor</div>
+    <div class="card-value">1.29</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Sharpe Ratio</div>
+    <div class="card-value">2.13</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Max Drawdown</div>
+    <div class="card-value loss">0.1%</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Total Costs</div>
+    <div class="card-value">₹159</div>
+  </div>
+</div>
+
+
+<div class="grid">
+  <div class="card"><div class="card-label">Long Trades</div><div class="card-value">37</div></div>
+  <div class="card"><div class="card-label">Long P&L</div><div class="card-value profit">₹53</div></div>
+  <div class="card"><div class="card-label">Short Trades</div><div class="card-value">4</div></div>
+  <div class="card"><div class="card-label">Short P&L</div><div class="card-value profit">₹49</div></div>
+</div>
+
+<h2>Equity Curve</h2>
+<div class="chart-container">
+  <canvas id="equityChart" height="80"></canvas>
+</div>
+
+<h2>Per-Stock Performance</h2>
+<div class="table-container">
+  <table>
+    <thead><tr><th>Symbol</th><th>Trades</th><th>P&L</th><th>Win Rate</th><th>Avg P&L</th></tr></thead>
+    <tbody>
+            <tr>
+                <td>ICICIBANK</td>
+                <td>5</td>
+                <td style="color:#22c55e">₹83.10</td>
+                <td>80%</td>
+                <td>₹16.62</td>
+            </tr>
+            <tr>
+                <td>SUNPHARMA</td>
+                <td>3</td>
+                <td style="color:#22c55e">₹35.88</td>
+                <td>67%</td>
+                <td>₹11.96</td>
+            </tr>
+            <tr>
+                <td>TATACONSUM</td>
+                <td>4</td>
+                <td style="color:#22c55e">₹33.42</td>
+                <td>50%</td>
+                <td>₹8.36</td>
+            </tr>
+            <tr>
+                <td>HCLTECH</td>
+                <td>2</td>
+                <td style="color:#22c55e">₹25.21</td>
+                <td>50%</td>
+                <td>₹12.60</td>
+            </tr>
+            <tr>
+                <td>HDFCBANK</td>
+                <td>4</td>
+                <td style="color:#22c55e">₹18.33</td>
+                <td>50%</td>
+                <td>₹4.58</td>
+            </tr>
+            <tr>
+                <td>TECHM</td>
+                <td>3</td>
+                <td style="color:#22c55e">₹13.15</td>
+                <td>67%</td>
+                <td>₹4.38</td>
+            </tr>
+            <tr>
+                <td>CIPLA</td>
+                <td>2</td>
+                <td style="color:#ef4444">₹-11.15</td>
+                <td>50%</td>
+                <td>₹-5.58</td>
+            </tr>
+            <tr>
+                <td>SBILIFE</td>
+                <td>5</td>
+                <td style="color:#ef4444">₹-18.32</td>
+                <td>20%</td>
+                <td>₹-3.66</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td>11</td>
+                <td style="color:#ef4444">₹-35.34</td>
+                <td>27%</td>
+                <td>₹-3.21</td>
+            </tr>
+            <tr>
+                <td>BHARTIARTL</td>
+                <td>2</td>
+                <td style="color:#ef4444">₹-41.96</td>
+                <td>0%</td>
+                <td>₹-20.98</td>
+            </tr></tbody>
+  </table>
+</div>
+
+<h2>Trade Log (41 trades)</h2>
+<div class="table-container">
+  <table>
+    <thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Entry ₹</th><th>Exit ₹</th><th>Qty</th><th>Net P&L</th><th>Costs</th><th>Reason</th></tr></thead>
+    <tbody>
+            <tr>
+                <td>ICICIBANK</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-12 09:50</td>
+                <td>2026-03-12 11:50</td>
+                <td>₹1,275.24</td>
+                <td>₹1,270.46</td>
+                <td>3</td>
+                <td style="color:#ef4444">₹-18.36</td>
+                <td>₹4.04</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>BHARTIARTL</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-12 15:05</td>
+                <td>2026-03-12 15:10</td>
+                <td>₹1,810.00</td>
+                <td>₹1,799.30</td>
+                <td>2</td>
+                <td style="color:#ef4444">₹-25.23</td>
+                <td>₹3.82</td>
+                <td>stop_loss</td>
+            </tr>
+            <tr>
+                <td>TECHM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-13 09:35</td>
+                <td>2026-03-13 11:35</td>
+                <td>₹1,327.56</td>
+                <td>₹1,334.33</td>
+                <td>3</td>
+                <td style="color:#22c55e">₹16.08</td>
+                <td>₹4.23</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-13 13:50</td>
+                <td>2026-03-13 15:00</td>
+                <td>₹2,589.19</td>
+                <td>₹2,571.11</td>
+                <td>1</td>
+                <td style="color:#ef4444">₹-20.81</td>
+                <td>₹2.73</td>
+                <td>stop_loss</td>
+            </tr>
+            <tr>
+                <td>ICICIBANK</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-16 12:50</td>
+                <td>2026-03-16 14:20</td>
+                <td>₹1,251.83</td>
+                <td>₹1,265.47</td>
+                <td>3</td>
+                <td style="color:#22c55e">₹36.92</td>
+                <td>₹4.00</td>
+                <td>take_profit</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-16 12:45</td>
+                <td>2026-03-16 14:35</td>
+                <td>₹2,632.62</td>
+                <td>₹2,652.37</td>
+                <td>1</td>
+                <td style="color:#22c55e">₹16.96</td>
+                <td>₹2.80</td>
+                <td>take_profit</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-16 15:10</td>
+                <td>2026-03-16 15:15</td>
+                <td>₹2,660.33</td>
+                <td>₹2,656.37</td>
+                <td>1</td>
+                <td style="color:#ef4444">₹-6.77</td>
+                <td>₹2.81</td>
+                <td>market_close</td>
+            </tr>
+            <tr>
+                <td>CIPLA</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-16 15:05</td>
+                <td>2026-03-16 15:15</td>
+                <td>₹1,302.65</td>
+                <td>₹1,295.85</td>
+                <td>3</td>
+                <td style="color:#ef4444">₹-24.52</td>
+                <td>₹4.13</td>
+                <td>market_close</td>
+            </tr>
+            <tr>
+                <td>TATACONSUM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-16 13:25</td>
+                <td>2026-03-16 14:20</td>
+                <td>₹1,086.44</td>
+                <td>₹1,098.85</td>
+                <td>4</td>
+                <td style="color:#22c55e">₹45.00</td>
+                <td>₹4.63</td>
+                <td>take_profit</td>
+            </tr>
+            <tr>
+                <td>ICICIBANK</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-17 13:05</td>
+                <td>2026-03-17 15:05</td>
+                <td>₹1,284.04</td>
+                <td>₹1,288.86</td>
+                <td>3</td>
+                <td style="color:#22c55e">₹10.35</td>
+                <td>₹4.09</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>BHARTIARTL</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-17 13:20</td>
+                <td>2026-03-17 15:15</td>
+                <td>₹1,831.92</td>
+                <td>₹1,825.49</td>
+                <td>2</td>
+                <td style="color:#ef4444">₹-16.73</td>
+                <td>₹3.87</td>
+                <td>market_close</td>
+            </tr>
+            <tr>
+                <td>HCLTECH</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-17 12:40</td>
+                <td>2026-03-17 14:40</td>
+                <td>₹1,322.76</td>
+                <td>₹1,322.94</td>
+                <td>3</td>
+                <td style="color:#ef4444">₹-3.67</td>
+                <td>₹4.20</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>TECHM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-17 14:10</td>
+                <td>2026-03-17 15:00</td>
+                <td>₹1,352.18</td>
+                <td>₹1,343.23</td>
+                <td>3</td>
+                <td style="color:#ef4444">₹-31.12</td>
+                <td>₹4.28</td>
+                <td>stop_loss</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-17 09:50</td>
+                <td>2026-03-17 11:50</td>
+                <td>₹2,678.54</td>
+                <td>₹2,679.86</td>
+                <td>1</td>
+                <td style="color:#ef4444">₹-1.52</td>
+                <td>₹2.84</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-17 15:10</td>
+                <td>2026-03-17 15:15</td>
+                <td>₹2,684.44</td>
+                <td>₹2,676.16</td>
+                <td>1</td>
+                <td style="color:#ef4444">₹-11.12</td>
+                <td>₹2.84</td>
+                <td>market_close</td>
+            </tr>
+            <tr>
+                <td>SUNPHARMA</td>
+                <td style="color:#ef4444">SHORT</td>
+                <td>2026-03-18 12:05</td>
+                <td>2026-03-18 13:35</td>
+                <td>₹1,791.40</td>
+                <td>₹1,790.49</td>
+                <td>2</td>
+                <td style="color:#ef4444">₹-1.98</td>
+                <td>₹3.79</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>SUNPHARMA</td>
+                <td style="color:#ef4444">SHORT</td>
+                <td>2026-03-18 14:15</td>
+                <td>2026-03-18 15:15</td>
+                <td>₹1,782.21</td>
+                <td>₹1,776.99</td>
+                <td>2</td>
+                <td style="color:#22c55e">₹6.67</td>
+                <td>₹3.77</td>
+                <td>market_close</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-18 11:20</td>
+                <td>2026-03-18 13:20</td>
+                <td>₹2,721.06</td>
+                <td>₹2,718.44</td>
+                <td>1</td>
+                <td style="color:#ef4444">₹-5.50</td>
+                <td>₹2.88</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>HDFCBANK</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-19 09:40</td>
+                <td>2026-03-19 11:40</td>
+                <td>₹803.05</td>
+                <td>₹805.80</td>
+                <td>6</td>
+                <td style="color:#22c55e">₹11.36</td>
+                <td>₹5.11</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>ICICIBANK</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-19 09:50</td>
+                <td>2026-03-19 11:50</td>
+                <td>₹1,258.13</td>
+                <td>₹1,266.27</td>
+                <td>3</td>
+                <td style="color:#22c55e">₹20.40</td>
+                <td>₹4.01</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>SUNPHARMA</td>
+                <td style="color:#ef4444">SHORT</td>
+                <td>2026-03-19 13:40</td>
+                <td>2026-03-19 14:55</td>
+                <td>₹1,759.92</td>
+                <td>₹1,742.47</td>
+                <td>2</td>
+                <td style="color:#22c55e">₹31.18</td>
+                <td>₹3.71</td>
+                <td>take_profit</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-19 09:50</td>
+                <td>2026-03-19 11:50</td>
+                <td>₹2,651.02</td>
+                <td>₹2,640.38</td>
+                <td>1</td>
+                <td style="color:#ef4444">₹-13.45</td>
+                <td>₹2.80</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>CIPLA</td>
+                <td style="color:#ef4444">SHORT</td>
+                <td>2026-03-19 13:40</td>
+                <td>2026-03-19 15:10</td>
+                <td>₹1,243.88</td>
+                <td>₹1,239.22</td>
+                <td>4</td>
+                <td style="color:#22c55e">₹13.37</td>
+                <td>₹5.26</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>SBILIFE</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-19 09:40</td>
+                <td>2026-03-19 11:40</td>
+                <td>₹1,931.97</td>
+                <td>₹1,929.04</td>
+                <td>2</td>
+                <td style="color:#ef4444">₹-9.95</td>
+                <td>₹4.09</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>TATACONSUM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-20 11:25</td>
+                <td>2026-03-20 12:20</td>
+                <td>₹1,056.33</td>
+                <td>₹1,048.28</td>
+                <td>4</td>
+                <td style="color:#ef4444">₹-36.66</td>
+                <td>₹4.45</td>
+                <td>stop_loss</td>
+            </tr>
+            <tr>
+                <td>HDFCBANK</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-23 10:15</td>
+                <td>2026-03-23 12:15</td>
+                <td>₹753.93</td>
+                <td>₹749.62</td>
+                <td>6</td>
+                <td style="color:#ef4444">₹-30.58</td>
+                <td>₹4.77</td>
+                <td>stop_loss</td>
+            </tr>
+            <tr>
+                <td>HCLTECH</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-23 09:35</td>
+                <td>2026-03-23 11:05</td>
+                <td>₹1,341.27</td>
+                <td>₹1,352.32</td>
+                <td>3</td>
+                <td style="color:#22c55e">₹28.88</td>
+                <td>₹4.28</td>
+                <td>take_profit</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-23 10:30</td>
+                <td>2026-03-23 12:30</td>
+                <td>₹2,539.97</td>
+                <td>₹2,538.63</td>
+                <td>1</td>
+                <td style="color:#ef4444">₹-4.03</td>
+                <td>₹2.69</td>
+                <td>max_hold_time</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-23 14:50</td>
+                <td>2026-03-23 15:15</td>
+                <td>₹2,536.67</td>
+                <td>₹2,525.14</td>
+                <td>1</td>
+                <td style="color:#ef4444">₹-14.21</td>
+                <td>₹2.68</td>
+                <td>market_close</td>
+            </tr>
+            <tr>
+                <td>SBILIFE</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-23 10:55</td>
+                <td>2026-03-23 11:30</td>
+                <td>₹1,829.01</td>
+                <td>₹1,818.49</td>
+                <td>2</td>
+                <td style="color:#ef4444">₹-24.91</td>
+                <td>₹3.86</td>
+                <td>stop_loss</td>
+            </tr>
+            <tr>
+                <td>SBILIFE</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-23 12:05</td>
+                <td>2026-03-23 12:50</td>
+                <td>₹1,832.02</td>
+                <td>₹1,821.79</td>
+                <td>2</td>
+                <td style="color:#ef4444">₹-24.32</td>
+                <td>₹3.87</td>
+                <td>stop_loss</td>
+            </tr>
+            <tr>
+                <td>TATACONSUM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-23 15:10</td>
+                <td>2026-03-23 15:15</td>
+                <td>₹1,024.41</td>
+                <td>₹1,023.49</td>
+                <td>4</td>
+                <td style="color:#ef4444">₹-8.03</td>
+                <td>₹4.34</td>
+                <td>market_close</td>
+            </tr>
+            <tr>
+                <td>HDFCBANK</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-24 10:40</td>
+                <td>2026-03-24 12:30</td>
+                <td>₹755.68</td>
+                <td>₹763.62</td>
+                <td>6</td>
+                <td style="color:#22c55e">₹42.81</td>
+                <td>₹4.83</td>
+                <td>take_profit</td>
+            </tr>
+            <tr>
+                <td>HDFCBANK</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-24 15:05</td>
+                <td>2026-03-24 15:15</td>
+                <td>₹765.33</td>
+                <td>₹765.27</td>
+                <td>6</td>
+                <td style="color:#ef4444">₹-5.25</td>
+                <td>₹4.86</td>
+                <td>market_close</td>
+            </tr>
+            <tr>
+                <td>ICICIBANK</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-24 12:40</td>
+                <td>2026-03-24 13:25</td>
+                <td>₹1,235.02</td>
+                <td>₹1,244.78</td>
+                <td>4</td>
+                <td style="color:#22c55e">₹33.78</td>
+                <td>₹5.26</td>
+                <td>take_profit</td>
+            </tr>
+            <tr>
+                <td>TECHM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-24 10:40</td>
+                <td>2026-03-24 11:20</td>
+                <td>₹1,403.40</td>
+                <td>₹1,414.29</td>
+                <td>3</td>
+                <td style="color:#22c55e">₹28.19</td>
+                <td>₹4.48</td>
+                <td>take_profit</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-24 10:40</td>
+                <td>2026-03-24 11:45</td>
+                <td>₹2,529.16</td>
+                <td>₹2,550.42</td>
+                <td>1</td>
+                <td style="color:#22c55e">₹18.57</td>
+                <td>₹2.69</td>
+                <td>take_profit</td>
+            </tr>
+            <tr>
+                <td>GRASIM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-24 15:10</td>
+                <td>2026-03-24 15:15</td>
+                <td>₹2,549.77</td>
+                <td>₹2,559.02</td>
+                <td>1</td>
+                <td style="color:#22c55e">₹6.54</td>
+                <td>₹2.71</td>
+                <td>market_close</td>
+            </tr>
+            <tr>
+                <td>SBILIFE</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-24 12:30</td>
+                <td>2026-03-24 12:50</td>
+                <td>₹1,825.81</td>
+                <td>₹1,853.27</td>
+                <td>2</td>
+                <td style="color:#22c55e">₹51.02</td>
+                <td>₹3.90</td>
+                <td>take_profit</td>
+            </tr>
+            <tr>
+                <td>SBILIFE</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-24 14:40</td>
+                <td>2026-03-24 15:15</td>
+                <td>₹1,837.92</td>
+                <td>₹1,834.78</td>
+                <td>2</td>
+                <td style="color:#ef4444">₹-10.16</td>
+                <td>₹3.89</td>
+                <td>market_close</td>
+            </tr>
+            <tr>
+                <td>TATACONSUM</td>
+                <td style="color:#22c55e">LONG</td>
+                <td>2026-03-24 10:40</td>
+                <td>2026-03-24 11:40</td>
+                <td>₹1,024.31</td>
+                <td>₹1,033.68</td>
+                <td>4</td>
+                <td style="color:#22c55e">₹33.12</td>
+                <td>₹4.36</td>
+                <td>take_profit</td>
+            </tr></tbody>
+  </table>
+</div>
+
+<script>
+new Chart(document.getElementById('equityChart'), {
+  type: 'line',
+  data: {
+    labels: ['2026-03-11','2026-03-12','2026-03-13','2026-03-16','2026-03-17','2026-03-18','2026-03-19','2026-03-20','2026-03-23','2026-03-24'],
+    datasets: [{
+      label: 'Equity',
+      data: [100000,99956.41,99951.68,100019.25,99965.45,99964.64,100017.57,99980.9,99903.7,100102.32],
+      borderColor: '#22c55e',
+      backgroundColor: 'rgba(34,197,94,0.05)',
+      fill: true,
+      tension: 0.3,
+      pointRadius: 0,
+      borderWidth: 2,
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: '#525252', maxTicksLimit: 10 }, grid: { color: '#1a1a1a' } },
+      y: { ticks: { color: '#525252', callback: v => '₹' + v.toLocaleString() }, grid: { color: '#1a1a1a' } }
+    }
+  }
+});
+</script>
+</body>
+</html>
