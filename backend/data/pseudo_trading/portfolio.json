@@ -1,0 +1,83 @@
+{
+  "capital": 100000.0,
+  "positions": [
+    {
+      "entry_date": "2026-03-30",
+      "exit_date": "2026-04-06",
+      "stocks": [
+        {
+          "symbol": "ONGC",
+          "quantity": 17,
+          "entry_price": 282.5139,
+          "entry_cost": 4.802736299999999,
+          "score": 0.9756944444444445,
+          "ret_5d": 0.06235870384325551
+        },
+        {
+          "symbol": "PERSISTENT",
+          "quantity": 1,
+          "entry_price": 4909.5996000000005,
+          "entry_cost": 4.909599600000001,
+          "score": 0.9756944444444443,
+          "ret_5d": 0.038819513643013205
+        },
+        {
+          "symbol": "ADANIPOWER",
+          "quantity": 32,
+          "entry_price": 154.22784,
+          "entry_cost": 4.935290879999999,
+          "score": 0.9513888888888888,
+          "ret_5d": 0.015705424310413062
+        },
+        {
+          "symbol": "AUROPHARMA",
+          "quantity": 3,
+          "entry_price": 1316.8284,
+          "entry_cost": 3.9504852,
+          "score": 0.9166666666666666,
+          "ret_5d": 0.017655257859687124
+        },
+        {
+          "symbol": "HCLTECH",
+          "quantity": 3,
+          "entry_price": 1367.1288000000002,
+          "entry_cost": 4.1013864,
+          "score": 0.90625,
+          "ret_5d": 0.02301866986578694
+        },
+        {
+          "symbol": "TECHM",
+          "quantity": 3,
+          "entry_price": 1394.3832,
+          "entry_cost": 4.1831496,
+          "score": 0.8993055555555557,
+          "ret_5d": 0.004910456383593266
+        },
+        {
+          "symbol": "INFY",
+          "quantity": 3,
+          "entry_price": 1272.2394000000002,
+          "entry_cost": 3.8167182000000004,
+          "score": 0.861111111111111,
+          "ret_5d": 0.010988135998088983
+        },
+        {
+          "symbol": "NAUKRI",
+          "quantity": 5,
+          "entry_price": 993.3828,
+          "entry_cost": 4.966914,
+          "score": 0.8541666666666666,
+          "ret_5d": 0.013494172970762554
+        },
+        {
+          "symbol": "LUPIN",
+          "quantity": 2,
+          "entry_price": 2339.4696000000004,
+          "entry_cost": 4.678939200000001,
+          "score": 0.8506944444444443,
+          "ret_5d": 0.005296017222820315
+        }
+      ]
+    }
+  ]
+}

@@ -41,6 +41,15 @@ train: ## Train ML model (with 45-day decay)
 bot: ## Run trading bot (paper mode)
 	. backend/.venv/bin/activate && python3 backend/scripts/run_bot.py
 
+reversal: ## Run daily reversal strategy (pseudo trading)
+	. backend/.venv/bin/activate && python3 backend/scripts/run_reversal.py
+
+reversal-status: ## Check reversal strategy status
+	. backend/.venv/bin/activate && python3 backend/scripts/run_reversal.py --status
+
+reversal-reset: ## Reset reversal strategy state
+	. backend/.venv/bin/activate && python3 backend/scripts/run_reversal.py --reset
+
 bot-test: ## Run single test cycle
 	. backend/.venv/bin/activate && python3 backend/scripts/run_bot.py --test
 
