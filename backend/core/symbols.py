@@ -1,5 +1,5 @@
 """
-NIFTY 50 stock universe — single source of truth.
+Stock universe — single source of truth.
 
 All modules import from here. No duplicate symbol lists elsewhere.
 """
@@ -55,5 +55,62 @@ NIFTY_50 = [
     "TRENT",
 ]
 
-# Count for validation
-assert len(NIFTY_50) == 48, f"Expected 48 symbols, got {len(NIFTY_50)}"
+# NIFTY 100 = NIFTY 50 + Next 50 most liquid large/mid-caps
+NIFTY_100_EXTRA = [
+    "ABB",
+    "ADANIGREEN",
+    "ADANIPOWER",
+    "AMBUJACEM",
+    "AUROPHARMA",
+    "BANKBARODA",
+    "BEL",
+    "BERGEPAINT",
+    "BOSCHLTD",
+    "CANBK",
+    "CHOLAFIN",
+    "COLPAL",
+    "DABUR",
+    "DLF",
+    "GAIL",
+    "GODREJCP",
+    "HAVELLS",
+    "HDFCAMC",
+    "HDFCLIFE",
+    "ICICIPRULI",
+    "IDEA",
+    "IDFCFIRSTB",
+    "INDHOTEL",
+    "IOC",
+    "IRCTC",
+    "JINDALSTEL",
+    "JSWENERGY",
+    "JUBLFOOD",
+    "LICI",
+    "LODHA",
+    "LUPIN",
+    "MAXHEALTH",
+    "MOTHERSON",
+    "NAUKRI",
+    "NHPC",
+    "OBEROIRLTY",
+    "OFSS",
+    "PAGEIND",
+    "PEL",
+    "PERSISTENT",
+    "PIDILITIND",
+    "PNB",
+    "POLYCAB",
+    "SRF",
+    "TATAELXSI",
+    "TATAPOWER",
+    "TORNTPHARM",
+    "UNITDSPR",
+    "VBL",
+    "ZOMATO",
+]
+
+# Combined universe
+NIFTY_100 = NIFTY_50 + NIFTY_100_EXTRA
+
+# Minimum daily turnover for liquidity filter (₹10 crore = 10,00,00,000)
+MIN_DAILY_TURNOVER = 10_00_00_000

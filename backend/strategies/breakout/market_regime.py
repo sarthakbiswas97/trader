@@ -19,7 +19,8 @@ from backend.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-_INDEX_PATH = Path(__file__).parent.parent.parent / "data" / "index" / "NIFTY50_5m.csv"
+_INDEX_5M_PATH = Path(__file__).parent.parent.parent / "data" / "index" / "NIFTY50_5m.csv"
+_INDEX_DAILY_PATH = Path(__file__).parent.parent.parent / "data" / "index" / "NIFTY50_daily.csv"
 
 # Regime thresholds
 ADX_TRENDING = 20       # ADX above this = trending
@@ -48,7 +49,7 @@ class MarketRegime:
 
     def load(self, path: str = None) -> None:
         """Load NIFTY 50 index data."""
-        path = Path(path) if path else _INDEX_PATH
+        path = Path(path) if path else _INDEX_5M_PATH
 
         if not path.exists():
             raise FileNotFoundError(

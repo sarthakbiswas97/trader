@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from backend.core.logger import get_logger
-from backend.core.symbols import NIFTY_50
+from backend.core.symbols import NIFTY_100
 from backend.services.backtester import ZerodhaCosts, BacktestTrade
 from backend.services.historical_data import HistoricalDataService
 from backend.strategies.breakout.detector import BreakoutDetector, Setup
@@ -62,7 +62,7 @@ class BreakoutBacktester:
         self.max_hold_candles = max_hold_candles
         self.slippage_pct = slippage_pct
         self.enable_shorting = enable_shorting
-        self.symbols = symbols or NIFTY_50
+        self.symbols = symbols or NIFTY_100
         self.test_start_date = test_start_date
         self.test_end_date = test_end_date
 

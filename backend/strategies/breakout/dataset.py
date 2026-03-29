@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from backend.core.logger import get_logger
-from backend.core.symbols import NIFTY_50
+from backend.core.symbols import NIFTY_100
 from backend.services.historical_data import HistoricalDataService
 from backend.strategies.breakout.detector import BreakoutDetector
 from backend.strategies.breakout.market_regime import MarketRegime
@@ -49,11 +49,23 @@ def build_dataset(
     Returns:
         DataFrame with features + label
     """
-    symbols = symbols or NIFTY_50
+    symbols = symbols or NIFTY_100
     ds = HistoricalDataService()
     detector = BreakoutDetector()
     regime = MarketRegime()
     regime.load()
+
+    # Load NIFTY index for relative strength calculation
+    nifty_path = _BACKEND_DIR / "data" / "index" / "NIFTY50_5m.csv"
+    nifty_df = pd.read_csv(nifty_path)
+    nifty_df["timestamp"] = pd.to_datetime(nifty_df["timestamp"])
+    nifty_df["date"] = nifty_df["timestamp"].dt.date
+    # Compute daily NIFTY return per day
+    nifty_daily = nifty_df.groupby("date").agg(
+        nifty_open=("open", "first"),
+        nifty_close=("close", "last"),
+    )
+    nifty_daily["nifty_return"] = (nifty_daily["nifty_close"] - nifty_daily["nifty_open"]) / nifty_daily["nifty_open"]
 
     rows = []
 
@@ -148,6 +160,13 @@ def build_dataset(
                     (setup.direction == "SHORT" and regime_info.get("direction") == "DOWN")
                 )
 
+                # Relative strength: stock return vs NIFTY return
+                nifty_ret = nifty_daily.loc[today, "nifty_return"] if today in nifty_daily.index else 0
+                stock_open = today_df.iloc[0]["open"]
+                stock_close_at_setup = entry_price
+                stock_ret = (stock_close_at_setup - stock_open) / stock_open if stock_open > 0 else 0
+                relative_strength = stock_ret - nifty_ret
+
                 row = {
                     # Identifiers (not features)
                     "symbol": symbol,
@@ -167,6 +186,7 @@ def build_dataset(
                     "market_adx": regime_info.get("adx", 0),
                     "market_trend_strength": regime_info.get("trend_strength", 0),
                     "direction_aligned": 1 if aligned else 0,
+                    "relative_strength": relative_strength,
                     "hour": candle_time.hour,
                     "minute": candle_time.minute,
                     "is_opening": 1 if setup.setup_type == "opening" else 0,
@@ -174,7 +194,7 @@ def build_dataset(
                     "score": setup.score,
 
                     # Label
-                    "outcome": outcome,  # 1 = TP hit first, 0 = SL hit or expired
+                    "outcome": outcome,
                 }
 
                 rows.append(row)
@@ -251,6 +271,7 @@ SETUP_FEATURE_COLS = [
     "market_adx",
     "market_trend_strength",
     "direction_aligned",
+    "relative_strength",
     "hour",
     "is_opening",
     "is_short",
