@@ -26,6 +26,8 @@ import {
   FlaskConical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MarketStatusBanner } from "@/components/market-status";
+import { ReplayMode } from "@/components/replay-mode";
 
 const STRATEGIES = [
   { name: "ML Prediction", tf: "5-min", trades: "1,635", pnl: -6088, pf: 0.29, status: "failed", why: "No signal in OHLCV features" },
@@ -290,6 +292,22 @@ export default function LandingPage() {
             </CardContent>
           </Card>
         </div>
+      </div>
+
+      {/* Live Market Status */}
+      <div>
+        <h2 className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wider">
+          Live Market Status
+        </h2>
+        <MarketStatusBanner />
+      </div>
+
+      {/* Replay Mode */}
+      <div>
+        <h2 className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wider">
+          Historical Replay — See the System in Action
+        </h2>
+        <ReplayMode />
       </div>
 
       {/* CTA */}
