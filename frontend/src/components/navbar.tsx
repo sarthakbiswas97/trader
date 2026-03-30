@@ -10,13 +10,15 @@ import {
   Sun,
   Moon,
   Activity,
+  FlaskConical,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 
 const NAV_ITEMS = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/", label: "Research", icon: FlaskConical },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/positions", label: "Positions", icon: TrendingUp },
   { href: "/predictions", label: "Predictions", icon: BrainCircuit },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -44,7 +46,9 @@ export function Navbar() {
         <nav className="flex items-center gap-1">
           {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
             const isActive =
-              href === "/" ? pathname === "/" : pathname.startsWith(href);
+              href === "/"
+                ? pathname === "/"
+                : pathname.startsWith(href);
 
             return (
               <Link

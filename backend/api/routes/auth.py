@@ -68,6 +68,59 @@ async def get_login_url():
     )
 
 
+@router.get("/callback")
+async def auth_callback(request_token: str, action: str = "login", status: str = "success"):
+    """
+    OAuth callback from Zerodha.
+
+    After user logs in on Zerodha, they are redirected here with a request_token.
+    This exchanges it for an access_token and saves the session.
+    """
+    if status != "success" or not request_token:
+        raise HTTPException(
+            status_code=status_code.HTTP_400_BAD_REQUEST,
+            detail="Authentication failed or cancelled.",
+        )
+
+    try:
+        from kiteconnect import KiteConnect
+        kite = KiteConnect(api_key=settings.kite_api_key)
+        data = kite.generate_session(
+            request_token=request_token,
+            api_secret=settings.kite_api_secret,
+        )
+
+        access_token = data["access_token"]
+
+        # Save session
+        from backend.broker.session import save_access_token
+        save_access_token(access_token, data)
+
+        logger.info(f"OAuth callback: authenticated as {data.get('user_name')}")
+
+        # Return HTML page that auto-closes or redirects to dashboard
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=f"""
+        <html>
+        <head><title>Authenticated</title></head>
+        <body style="font-family:sans-serif;text-align:center;padding:50px;background:#0a0a0a;color:#e5e5e5;">
+            <h1 style="color:#22c55e;">Authenticated</h1>
+            <p>Welcome, {data.get('user_name', 'Trader')}</p>
+            <p>You can close this tab and return to the dashboard.</p>
+            <script>setTimeout(()=>window.close(), 3000);</script>
+        </body>
+        </html>
+        """)
+
+    except Exception as e:
+        logger.error(f"OAuth callback failed: {e}")
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            content=f"<h1>Authentication Failed</h1><p>{e}</p>",
+            status_code=500,
+        )
+
+
 @router.post("/connect", response_model=SuccessResponse)
 async def connect_broker(state: AppStateDep, paper_mode: bool = True):
     """

@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/stat-card";
 import { type Prediction, PREDICTIONS_STREAM_URL } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { MarketStatusBanner } from "@/components/market-status";
 
 function PredictionCard({ prediction }: { prediction: Prediction }) {
   const isUp = prediction.direction === "UP";
@@ -218,6 +219,9 @@ export default function PredictionsPage() {
           )}
         </button>
       </div>
+
+      {/* Market Status */}
+      <MarketStatusBanner />
 
       {/* Progress Bar */}
       {streaming && progress.total > 0 && (

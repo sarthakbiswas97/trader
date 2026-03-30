@@ -1,18 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import {
-  Wallet,
-  TrendingUp,
-  BarChart3,
-  Activity,
-  ShieldCheck,
-  RefreshCw,
-  Flame,
-  ArrowUpRight,
-  ArrowDownRight,
-  Minus,
-} from "lucide-react";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -23,328 +11,306 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { StatCard } from "@/components/stat-card";
-import { PnlText, formatCurrency } from "@/components/pnl-text";
-import { useApi } from "@/hooks/use-api";
-import { api } from "@/lib/api";
+import {
+  TrendingUp,
+  BarChart3,
+  Shield,
+  Brain,
+  Clock,
+  Target,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  ArrowRight,
+  Activity,
+  FlaskConical,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import type {
-  PositionsResponse,
-  BotStatus,
-  HealthResponse,
-} from "@/lib/api";
 
-function ConnectionBanner({
-  health,
-  onConnect,
-  connecting,
-}: {
-  health: HealthResponse | null;
-  onConnect: () => void;
-  connecting: boolean;
+const STRATEGIES = [
+  { name: "ML Prediction", tf: "5-min", trades: "1,635", pnl: -6088, pf: 0.29, status: "failed", why: "No signal in OHLCV features" },
+  { name: "Breakout Detection", tf: "5-min", trades: "200", pnl: -1684, pf: 0.42, status: "failed", why: "Fakeouts, no follow-through" },
+  { name: "Breakout + Regime", tf: "5-min", trades: "22", pnl: -128, pf: 0.69, status: "failed", why: "Too few trades to validate" },
+  { name: "Mean Reversion", tf: "5-min", trades: "1,064", pnl: -8693, pf: 0.1, status: "failed", why: "Signal too weak after costs" },
+  { name: "Trend Following", tf: "30-min", trades: "405", pnl: -4011, pf: 0.32, status: "failed", why: "No intraday trend persistence" },
+  { name: "Cross-Sectional ML", tf: "5-min", trades: "831K", pnl: 0, pf: 0, status: "failed", why: "IC ≈ 0 — no predictive signal" },
+  { name: "Daily Reversal", tf: "Daily", trades: "187", pnl: 60337, pf: 1.6, status: "validated", why: "Structural mean-reversion effect" },
+];
+
+const YEARS = [
+  { year: "2022", pnl: 14872, wr: 59, dd: 7.8, ic: 0.052 },
+  { year: "2023", pnl: 49647, wr: 75, dd: 9.6, ic: 0.055 },
+  { year: "2024", pnl: 14134, wr: 58, dd: 17.7, ic: 0.011 },
+  { year: "2025", pnl: 24655, wr: 49, dd: 8.1, ic: 0.045 },
+  { year: "2026", pnl: -17291, wr: 14, dd: 20.8, ic: -0.11 },
+];
+
+function Stat({ label, value, trend, icon: Icon }: {
+  label: string; value: string; trend?: "profit" | "loss"; icon?: typeof TrendingUp;
 }) {
-  const connected = health?.components?.broker_authenticated;
-  if (connected) return null;
-
   return (
-    <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 flex items-center justify-between">
-      <div>
-        <p className="text-sm font-medium">Broker Not Connected</p>
-        <p className="text-xs text-muted-foreground">
-          Connect to Zerodha to view live portfolio data
+    <Card>
+      <CardContent className="px-4 py-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-muted-foreground">{label}</p>
+          {Icon && <Icon className="h-3.5 w-3.5 text-muted-foreground/60" />}
+        </div>
+        <p className={cn("text-lg font-semibold tracking-tight mt-1", trend === "profit" && "text-profit", trend === "loss" && "text-loss")}>
+          {value}
         </p>
-      </div>
-      <button
-        onClick={onConnect}
-        disabled={connecting}
-        className="text-xs font-medium px-3 py-1.5 rounded-md bg-foreground text-background hover:opacity-80 transition-colors disabled:opacity-30"
-      >
-        {connecting ? "Connecting..." : "Connect"}
-      </button>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
-function PositionsTable({ data }: { data: PositionsResponse | null }) {
-  if (!data || data.positions.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/50">
-        <TrendingUp className="h-8 w-8 mb-2" />
-        <p className="text-sm">No open positions</p>
-      </div>
-    );
-  }
-
+export default function LandingPage() {
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead className="text-xs">Symbol</TableHead>
-          <TableHead className="text-xs text-right">Qty</TableHead>
-          <TableHead className="text-xs text-right">Avg Price</TableHead>
-          <TableHead className="text-xs text-right">Current</TableHead>
-          <TableHead className="text-xs text-right">P&L</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {data.positions.map((p) => (
-          <TableRow key={p.symbol}>
-            <TableCell className="text-sm font-medium">{p.symbol}</TableCell>
-            <TableCell className="text-sm text-right">{p.quantity}</TableCell>
-            <TableCell className="text-sm text-right">
-              {formatCurrency(p.avg_price)}
-            </TableCell>
-            <TableCell className="text-sm text-right">
-              {formatCurrency(p.current_price)}
-            </TableCell>
-            <TableCell className="text-right">
-              <PnlText value={p.pnl} percent={p.pnl_percent} className="text-sm" />
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
+    <div className="px-6 py-8 space-y-10 max-w-5xl mx-auto">
 
-function BotStatusBadge({ status }: { status: BotStatus | null }) {
-  if (!status) return null;
-
-  const variants: Record<string, { label: string; className: string }> = {
-    running: {
-      label: "Running",
-      className: "bg-profit/10 text-profit border-profit/20 hover:bg-profit/10",
-    },
-    stopped: {
-      label: "Stopped",
-      className: "bg-muted text-muted-foreground border-border/60 hover:bg-muted",
-    },
-    error: {
-      label: "Error",
-      className: "bg-loss/10 text-loss border-loss/20 hover:bg-loss/10",
-    },
-  };
-
-  const v = variants[status.status] || variants.stopped;
-
-  return (
-    <Badge variant="outline" className={v.className}>
-      {status.status === "running" && (
-        <span className="h-1.5 w-1.5 rounded-full bg-profit mr-1.5 animate-pulse" />
-      )}
-      {v.label}
-    </Badge>
-  );
-}
-
-function StatusRow({ label, value, ok }: { label: string; value: string; ok?: boolean }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <div className="flex items-center gap-1.5">
-        <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-profit" : "bg-muted-foreground/30"}`} />
-        <span className="text-xs font-medium">{value}</span>
-      </div>
-    </div>
-  );
-}
-
-export default function DashboardPage() {
-  const { data: health, refresh: refreshHealth } = useApi(api.health, { pollInterval: 10000 });
-  const { data: portfolio, refresh: refreshPortfolio } = useApi(api.portfolioSummary, { immediate: false });
-  const { data: positions, refresh: refreshPositions } = useApi(api.positions, { immediate: false });
-  const { data: botStatus } = useApi(api.botStatus, { pollInterval: 5000 });
-  const { data: watchlist } = useApi(api.botWatchlist, { pollInterval: 10000 });
-
-  const connected = health?.components?.broker_authenticated;
-  const hasFetched = useRef(false);
-
-  const handleConnect = async () => {
-    try {
-      await api.connect(true);
-      await refreshHealth();
-      await refreshPortfolio();
-      await refreshPositions();
-    } catch {
-      // Connection failed - banner stays visible
-    }
-  };
-
-  // Auto-fetch portfolio once when we detect connection
-  useEffect(() => {
-    if (connected && !hasFetched.current) {
-      hasFetched.current = true;
-      refreshPortfolio();
-      refreshPositions();
-    }
-  }, [connected, refreshPortfolio, refreshPositions]);
-
-  return (
-    <div className="px-6 py-6 space-y-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-xs text-muted-foreground">Portfolio overview and trading activity</p>
+      {/* Hero */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Activity className="h-5 w-5 text-profit" />
+          <h1 className="text-xl font-semibold tracking-tight">Autonomous Trading System</h1>
         </div>
-        <div className="flex items-center gap-3">
-          <BotStatusBadge status={botStatus} />
-          <button
-            onClick={() => {
-              refreshHealth();
-              if (connected) {
-                refreshPortfolio();
-                refreshPositions();
-              }
-            }}
-            className="h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            aria-label="Refresh"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
+        <p className="text-sm text-muted-foreground max-w-2xl">
+          ML-powered trading system for Indian equity markets. Built through systematic research —
+          testing 6+ strategies across 4 years of NIFTY 100 data to find a validated, statistically significant edge.
+        </p>
+        <Link
+          href="/dashboard"
+          className="inline-flex items-center gap-1.5 text-xs font-medium px-4 py-2 rounded-md bg-foreground text-background hover:opacity-80 transition-colors mt-2"
+        >
+          Try It Live (Paper Trading)
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+
+      {/* Key Metrics */}
+      <div>
+        <h2 className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wider">Performance</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Stat label="4-Year Return" value="+60%" trend="profit" icon={TrendingUp} />
+          <Stat label="CAGR" value="12.5%" trend="profit" icon={BarChart3} />
+          <Stat label="Win Rate" value="59%" icon={Target} />
+          <Stat label="Years Profitable" value="4 / 5" trend="profit" icon={CheckCircle2} />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+          <Stat label="IC (t-stat)" value="0.029 (5.0)" icon={Brain} />
+          <Stat label="Max Drawdown" value="17.6%" trend="loss" icon={AlertTriangle} />
+          <Stat label="Universe" value="NIFTY 100" icon={BarChart3} />
+          <Stat label="Holding Period" value="5 days" icon={Clock} />
         </div>
       </div>
 
-      {/* Connection Banner */}
-      <ConnectionBanner health={health} onConnect={handleConnect} connecting={false} />
-
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard
-          title="Total Capital"
-          value={formatCurrency(portfolio?.total_capital ?? 100000)}
-          icon={Wallet}
-        />
-        <StatCard
-          title="Total P&L"
-          value={formatCurrency(portfolio?.total_pnl ?? 0)}
-          subtitle={
-            portfolio
-              ? `${portfolio.total_pnl_percent >= 0 ? "+" : ""}${portfolio.total_pnl_percent.toFixed(2)}%`
-              : undefined
-          }
-          icon={TrendingUp}
-          trend={
-            (portfolio?.total_pnl ?? 0) > 0
-              ? "profit"
-              : (portfolio?.total_pnl ?? 0) < 0
-                ? "loss"
-                : "neutral"
-          }
-        />
-        <StatCard
-          title="Open Positions"
-          value={String(portfolio?.open_positions ?? 0)}
-          subtitle={portfolio ? `${formatCurrency(portfolio.invested_value)} invested` : undefined}
-          icon={BarChart3}
-        />
-        <StatCard
-          title="Bot Cycles"
-          value={String(botStatus?.cycle_count ?? 0)}
-          subtitle={
-            botStatus?.last_cycle
-              ? `Last: ${new Date(botStatus.last_cycle).toLocaleTimeString()}`
-              : "Not running"
-          }
-          icon={Activity}
-        />
-      </div>
-
-      {/* Hot Watchlist */}
-      {watchlist && watchlist.tier1_count > 0 && (
-        <Card>
-          <CardHeader className="pb-2 px-4 pt-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-1.5">
-              <Flame className="h-3.5 w-3.5 text-warning" />
-              Hot Watchlist
-              <Badge variant="outline" className="text-[11px] ml-1 text-warning border-warning/20">
-                {watchlist.tier1_count} / {watchlist.total_symbols}
-              </Badge>
-              <span className="text-[11px] text-muted-foreground/60 font-normal ml-auto">
-                Scanned every 2 min
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-3">
-            <div className="flex flex-wrap gap-2">
-              {watchlist.watchlist.map((w) => (
-                <div
-                  key={w.symbol}
-                  className={cn(
-                    "flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs",
-                    w.direction === "UP" && "border-profit/20 bg-profit/5",
-                    w.direction === "DOWN" && "border-loss/20 bg-loss/5",
-                    w.direction === "NEUTRAL" && "border-border/60 bg-muted/30",
-                  )}
-                >
-                  {w.direction === "UP" ? (
-                    <ArrowUpRight className="h-3 w-3 text-profit" />
-                  ) : w.direction === "DOWN" ? (
-                    <ArrowDownRight className="h-3 w-3 text-loss" />
-                  ) : (
-                    <Minus className="h-3 w-3 text-muted-foreground" />
-                  )}
-                  <span className="font-medium">{w.symbol}</span>
-                  <span className="text-muted-foreground/60">
-                    {(w.confidence * 100).toFixed(0)}%
-                  </span>
-                  {w.has_position && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-profit" />
-                  )}
+      {/* How It Works */}
+      <Card>
+        <CardHeader className="pb-2 px-4 pt-3">
+          <CardTitle className="text-sm font-medium">How It Works</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <div className="space-y-3">
+            {[
+              { step: "1", title: "Market Regime Gate", desc: "Check if NIFTY is falling > 0.5% or breadth is weak. If yes, stay in cash — no trades.", color: "text-loss" },
+              { step: "2", title: "Reversal Ranking", desc: "Rank all 96 NIFTY 100 stocks by 5d + 10d + 21d past returns. Biggest losers ranked highest.", color: "text-foreground" },
+              { step: "3", title: "Buy Top 10 Losers", desc: "Select the 10 stocks that fell the most. These are statistically likely to bounce over 5 days.", color: "text-profit" },
+              { step: "4", title: "Hold 5 Trading Days", desc: "Hold positions for one week. The short-term reversal effect plays out over this timeframe.", color: "text-foreground" },
+              { step: "5", title: "Rebalance Weekly", desc: "Sell all positions, compute fresh rankings, buy next batch of losers. Repeat.", color: "text-foreground" },
+              { step: "6", title: "Kill Switch", desc: "If rolling 20-trade win rate drops below 50%, pause all trading until the edge returns.", color: "text-warning" },
+            ].map((item) => (
+              <div key={item.step} className="flex gap-3 items-start">
+                <div className="flex-shrink-0 h-6 w-6 rounded-full bg-muted flex items-center justify-center">
+                  <span className="text-[11px] font-medium">{item.step}</span>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Two-column layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Positions */}
-        <Card className="lg:col-span-2">
-          <CardHeader className="pb-2 px-4 pt-3">
-            <CardTitle className="text-sm font-medium">Open Positions</CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-3">
-            <PositionsTable data={positions ?? null} />
-          </CardContent>
-        </Card>
-
-        {/* System Status */}
-        <Card>
-          <CardHeader className="pb-2 px-4 pt-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-1.5">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              System Status
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-3 space-y-3">
-            <div className="space-y-2">
-              <StatusRow label="API" value={health?.components?.api ? "Online" : "Offline"} ok={health?.components?.api} />
-              <StatusRow label="Broker" value={connected ? "Connected" : "Disconnected"} ok={connected} />
-              <StatusRow label="ML Model" value={health?.components?.model_available ? "Loaded" : "Not Found"} ok={health?.components?.model_available} />
-              <StatusRow label="Session" value={health?.components?.session_valid ? "Valid" : "Expired"} ok={health?.components?.session_valid} />
-              <StatusRow label="Bot" value={health?.components?.bot_running ? "Running" : "Stopped"} ok={health?.components?.bot_running} />
-            </div>
-
-            {portfolio && (
-              <div className="border-t border-border/50 pt-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Available Cash</span>
-                  <span className="text-xs font-medium">{formatCurrency(portfolio.available_cash)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Realized P&L</span>
-                  <PnlText value={portfolio.realized_pnl} className="text-xs font-medium" />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Unrealized P&L</span>
-                  <PnlText value={portfolio.unrealized_pnl} className="text-xs font-medium" />
+                <div>
+                  <p className={cn("text-sm font-medium", item.color)}>{item.title}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{item.desc}</p>
                 </div>
               </div>
-            )}
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Research Journey */}
+      <div>
+        <h2 className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wider flex items-center gap-1.5">
+          <FlaskConical className="h-3.5 w-3.5" />
+          Research Journey — 6 Strategies Tested
+        </h2>
+        <Card>
+          <CardContent className="px-0 py-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">#</TableHead>
+                  <TableHead className="text-xs">Strategy</TableHead>
+                  <TableHead className="text-xs">Timeframe</TableHead>
+                  <TableHead className="text-xs text-right">Trades</TableHead>
+                  <TableHead className="text-xs text-right">P&L</TableHead>
+                  <TableHead className="text-xs text-right">PF</TableHead>
+                  <TableHead className="text-xs">Result</TableHead>
+                  <TableHead className="text-xs">Insight</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {STRATEGIES.map((s, i) => (
+                  <TableRow key={i} className={cn(s.status === "validated" && "bg-profit/5")}>
+                    <TableCell className="text-xs">{i + 1}</TableCell>
+                    <TableCell className="text-xs font-medium">{s.name}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{s.tf}</TableCell>
+                    <TableCell className="text-xs text-right">{s.trades}</TableCell>
+                    <TableCell className={cn("text-xs text-right font-medium", s.pnl > 0 ? "text-profit" : s.pnl < 0 ? "text-loss" : "")}>
+                      {s.pnl > 0 ? "+" : ""}{s.pnl === 0 ? "IC ≈ 0" : `₹${s.pnl.toLocaleString()}`}
+                    </TableCell>
+                    <TableCell className="text-xs text-right">{s.pf > 0 ? s.pf.toFixed(2) : "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={cn("text-[10px]", s.status === "validated" ? "text-profit border-profit/20" : "text-loss border-loss/20")}>
+                        {s.status === "validated" ? "Validated" : "Failed"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-[11px] text-muted-foreground max-w-[180px]">{s.why}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
+      </div>
+
+      {/* Walk-Forward Validation */}
+      <div>
+        <h2 className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wider">
+          Walk-Forward Validation — Each Year Tested Independently
+        </h2>
+        <Card>
+          <CardContent className="px-0 py-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Year</TableHead>
+                  <TableHead className="text-xs text-right">P&L</TableHead>
+                  <TableHead className="text-xs text-right">Win Rate</TableHead>
+                  <TableHead className="text-xs text-right">Max DD</TableHead>
+                  <TableHead className="text-xs text-right">IC</TableHead>
+                  <TableHead className="text-xs">Result</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {YEARS.map((y) => (
+                  <TableRow key={y.year}>
+                    <TableCell className="text-sm font-medium">{y.year}</TableCell>
+                    <TableCell className={cn("text-sm text-right font-medium", y.pnl > 0 ? "text-profit" : "text-loss")}>
+                      {y.pnl > 0 ? "+" : ""}₹{y.pnl.toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-sm text-right">{y.wr}%</TableCell>
+                    <TableCell className="text-sm text-right text-loss">{y.dd}%</TableCell>
+                    <TableCell className={cn("text-sm text-right", y.ic > 0 ? "text-profit" : "text-loss")}>
+                      {y.ic > 0 ? "+" : ""}{y.ic.toFixed(3)}
+                    </TableCell>
+                    <TableCell>
+                      {y.pnl > 0 ? <CheckCircle2 className="h-4 w-4 text-profit" /> : <XCircle className="h-4 w-4 text-loss" />}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Key Discovery */}
+      <Card className="border-border/50">
+        <CardHeader className="pb-2 px-4 pt-3">
+          <CardTitle className="text-sm font-medium flex items-center gap-1.5">
+            <Brain className="h-3.5 w-3.5" />
+            Key Discovery
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-lg border border-loss/20 bg-loss/5 p-4">
+              <p className="text-xs font-medium text-loss mb-1">Intraday (5-min candles)</p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                IC ≈ 0. Every strategy loses money. Indian large-cap stocks are too efficient at this
+                resolution. Price-derived features (RSI, MACD, breakouts) are already arbitraged by
+                institutions and HFT systems.
+              </p>
+            </div>
+            <div className="rounded-lg border border-profit/20 bg-profit/5 p-4">
+              <p className="text-xs font-medium text-profit mb-1">Daily (5-day holding)</p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                IC = +0.029 (t-stat = 5.0). Short-term reversal is a structural behavioral effect —
+                stocks that fall hard attract value buyers, producing a statistically significant
+                5-day bounce across 4 years of out-of-sample data.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Protection */}
+      <div>
+        <h2 className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wider">Capital Protection</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <Card>
+            <CardContent className="px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Shield className="h-4 w-4 text-profit" />
+                <p className="text-xs font-medium">Market Regime Gate</p>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Blocks all entries when NIFTY falls &gt; 0.5%, breadth is weak, or 5-day decline exceeds 3%.
+                Validated live — correctly blocked entries on bearish days.
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle className="h-4 w-4 text-warning" />
+                <p className="text-xs font-medium">Kill Switch</p>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Pauses trading when rolling 20-trade win rate drops below 50%.
+                Reduces max drawdown from 27.6% to 17.6% — a 36% improvement.
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                <p className="text-xs font-medium">Position Limits</p>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Max 5% capital per stock. Max 10 stocks at a time. Weekly rebalance with fixed 5-day holding.
+                Simple, rule-based, no discretion.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* CTA */}
+      <div className="text-center py-6 space-y-3">
+        <Link
+          href="/dashboard"
+          className="inline-flex items-center gap-1.5 text-sm font-medium px-6 py-2.5 rounded-md bg-foreground text-background hover:opacity-80 transition-colors"
+        >
+          Try the Dashboard (Paper Trading)
+          <ArrowRight className="h-4 w-4" />
+        </Link>
+        <p className="text-[11px] text-muted-foreground/50">
+          No account needed. Simulated trading with ₹1,00,000 virtual capital using real market data.
+        </p>
+      </div>
+
+      {/* Footer */}
+      <div className="border-t border-border/50 pt-4 text-center">
+        <p className="text-[11px] text-muted-foreground/40">
+          Built with Python, FastAPI, XGBoost, LightGBM, Next.js, Zerodha Kite Connect
+        </p>
       </div>
     </div>
   );

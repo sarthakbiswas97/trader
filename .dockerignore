@@ -1,0 +1,13 @@
+backend/.venv
+backend/data/historical/*.csv
+backend/data/index/*.csv
+backend/data/training/*.csv
+backend/data/pseudo_trading/*
+frontend/node_modules
+frontend/.next
+.git
+.claude
+*.pyc
+__pycache__
+.env
+.kite_session
