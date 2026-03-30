@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
+from scipy.stats import spearmanr
 
 from backend.core.logger import get_logger
 from backend.core.symbols import NIFTY_100
@@ -120,11 +121,19 @@ class ReversalEngine:
         exits = self._check_exits(prices, today)
         result["exits"] = exits
 
-        # 3. Check kill switch
+        # 3. Check market regime gate
+        market_weak, market_reason = self._check_market_regime(prices)
+        result["market_weak"] = market_weak
+        result["market_reason"] = market_reason
+
+        # 4. Check kill switch
         self.kill_switch_active = self._check_kill_switch()
         result["kill_switch"] = self.kill_switch_active
 
-        if self.kill_switch_active:
+        if market_weak:
+            logger.warning(f"Market regime WEAK — skipping entries ({market_reason})")
+            result["action"] = f"market_weak: {market_reason}"
+        elif self.kill_switch_active:
             logger.warning("Kill switch ACTIVE — skipping new entries")
             result["action"] = "kill_switch_active"
         else:
@@ -216,10 +225,11 @@ class ReversalEngine:
             return []
 
         # Rank: worst performers get highest score (reversal = buy losers)
+        # ascending=False means lowest return → highest rank (percentile near 1.0)
         score_df = pd.DataFrame(scores).T
-        rank = (score_df["ret_5d"].rank(ascending=True, pct=True) +
-                score_df["ret_10d"].rank(ascending=True, pct=True) +
-                score_df["ret_21d"].rank(ascending=True, pct=True)) / 3
+        rank = (score_df["ret_5d"].rank(ascending=False, pct=True) +
+                score_df["ret_10d"].rank(ascending=False, pct=True) +
+                score_df["ret_21d"].rank(ascending=False, pct=True)) / 3
 
         # Top N (highest rank = biggest losers)
         top = rank.sort_values(ascending=False).head(self.top_n)
@@ -327,6 +337,62 @@ class ReversalEngine:
         self.positions = remaining
         return exits
 
+    def _check_market_regime(self, prices: dict) -> tuple[bool, str]:
+        """
+        Check if market regime supports trading.
+
+        Returns:
+            (is_weak, reason)
+        """
+        # 1. NIFTY check: is market falling today?
+        if self.kite:
+            try:
+                nifty = self.kite.ohlc(["NSE:NIFTY 50"])
+                n = nifty.get("NSE:NIFTY 50", {})
+                ltp = n.get("last_price", 0)
+                prev_close = n.get("ohlc", {}).get("close", ltp)
+
+                if prev_close > 0:
+                    nifty_change = (ltp - prev_close) / prev_close
+                    if nifty_change < -0.005:  # NIFTY down > 0.5%
+                        return True, f"NIFTY down {nifty_change*100:.1f}%"
+            except Exception as e:
+                logger.warning(f"Failed to check NIFTY: {e}")
+
+        # 2. Breadth check: are most stocks falling?
+        if prices:
+            from backend.services.historical_data import HistoricalDataService
+            ds = HistoricalDataService()
+
+            falling = 0
+            total = 0
+            for symbol, current_price in list(prices.items())[:50]:
+                df = ds.load_candles(symbol, "daily")
+                if df.empty:
+                    continue
+                prev_close = df.iloc[-1]["close"]
+                if prev_close > 0:
+                    total += 1
+                    if current_price < prev_close:
+                        falling += 1
+
+            if total > 20:
+                breadth = falling / total
+                if breadth > 0.70:  # >70% stocks falling
+                    return True, f"Breadth weak: {falling}/{total} ({breadth:.0%}) stocks falling"
+
+        # 3. NIFTY 5-day trend: check if in sustained decline
+        nifty_path = _DATA_DIR / "index" / "NIFTY50_daily.csv"
+        if nifty_path.exists():
+            nifty_df = pd.read_csv(nifty_path)
+            if len(nifty_df) >= 5:
+                close = nifty_df["close"]
+                ret_5d = (close.iloc[-1] - close.iloc[-5]) / close.iloc[-5]
+                if ret_5d < -0.03:  # NIFTY down > 3% in 5 days
+                    return True, f"NIFTY 5-day trend: {ret_5d*100:.1f}%"
+
+        return False, "market OK"
+
     def _check_kill_switch(self) -> bool:
         """Check if kill switch should activate."""
         if len(self.trade_history) < 20:
@@ -386,6 +452,7 @@ class ReversalEngine:
         print(f"DAILY REVERSAL — {result['date']}")
         print(f"{'='*50}")
         print(f"  Action: {result['action']}")
+        print(f"  Market: {'WEAK — ' + result.get('market_reason', '') if result.get('market_weak') else 'OK'}")
         print(f"  Kill Switch: {'ACTIVE' if result['kill_switch'] else 'OK'}")
         print(f"  Capital: ₹{self.capital:,.0f}")
         print(f"  Portfolio: ₹{result['portfolio_value']:,.0f}")

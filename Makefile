@@ -50,6 +50,12 @@ reversal-status: ## Check reversal strategy status
 reversal-reset: ## Reset reversal strategy state
 	. backend/.venv/bin/activate && python3 backend/scripts/run_reversal.py --reset
 
+intraday: ## Run intraday entry filter on reversal picks (live monitoring)
+	. backend/.venv/bin/activate && python3 backend/scripts/run_intraday_reversal.py
+
+intraday-scan: ## Single scan of intraday entries (no loop)
+	. backend/.venv/bin/activate && python3 backend/scripts/run_intraday_reversal.py --scan
+
 bot-test: ## Run single test cycle
 	. backend/.venv/bin/activate && python3 backend/scripts/run_bot.py --test
 
