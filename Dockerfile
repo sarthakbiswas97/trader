@@ -1,14 +1,3 @@
-# Multi-stage build: frontend + backend in one container
-# Stage 1: Build frontend
-FROM node:20-slim AS frontend-builder
-
-WORKDIR /app/frontend
-COPY frontend/package.json frontend/bun.lock ./
-RUN npm install
-COPY frontend/ ./
-RUN npm run build
-
-# Stage 2: Python backend + built frontend
 FROM python:3.13-slim
 
 WORKDIR /app
@@ -16,10 +5,6 @@ WORKDIR /app
 # Install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl && rm -rf /var/lib/apt/lists/*
-
-# Install Node.js for serving Next.js
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps
 COPY backend/requirements.txt backend/requirements.txt
@@ -30,12 +15,6 @@ COPY backend/ backend/
 COPY .env.example .env.example
 COPY Makefile Makefile
 
-# Copy built frontend
-COPY --from=frontend-builder /app/frontend/.next frontend/.next
-COPY --from=frontend-builder /app/frontend/node_modules frontend/node_modules
-COPY --from=frontend-builder /app/frontend/package.json frontend/package.json
-COPY --from=frontend-builder /app/frontend/public frontend/public
-
 # Create non-root user
 RUN useradd -m -s /bin/bash appuser
 
@@ -44,8 +23,8 @@ RUN mkdir -p backend/data/historical backend/data/index backend/data/pseudo_trad
     backend/data/multi_engine backend/ml/models \
     && chown -R appuser:appuser /app
 
-# Expose ports
-EXPOSE 8000 3000
+# Expose port
+EXPOSE 8000
 
 # Start script
 COPY docker-entrypoint.sh /docker-entrypoint.sh
