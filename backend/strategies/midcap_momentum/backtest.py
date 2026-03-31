@@ -72,37 +72,46 @@ def _compute_backtest_allocation(
     regime: Regime,
     rolling_ic: float | None,
     nifty_ret_5d: float | None,
+    current_drawdown: float = 0.0,
 ) -> float:
     """
-    Dynamic allocation for backtest — matches production logic.
+    Continuous confidence-scored allocation for backtest.
 
-    Returns total invested fraction (0.0 - 1.0).
+    Matches production logic: soft DD curve, regime-weighted k,
+    regime-specific floors.
     """
-    # Base allocation
-    base = {Regime.BULL: 0.75, Regime.NEUTRAL: 0.60, Regime.WEAK: 0.25}
-    alloc = base[regime]
+    # Regime config: base, floor, dd_k
+    config = {
+        Regime.BULL: (0.75, 0.25, 0.5),
+        Regime.NEUTRAL: (0.60, 0.15, 0.7),
+        Regime.WEAK: (0.25, 0.08, 1.0),
+    }
+    base, floor, dd_k = config[regime]
 
-    if regime == Regime.WEAK:
-        if rolling_ic is not None:
-            if rolling_ic < -0.01:
-                alloc = 0.0
-            elif rolling_ic < 0.005:
-                alloc = 0.15
-            elif rolling_ic > 0.02:
-                alloc = 0.30
+    # Confidence from IC + momentum
+    scores, weights = [], []
 
-    elif regime == Regime.BULL:
-        if nifty_ret_5d is not None:
-            if nifty_ret_5d > 0.02:
-                alloc = 0.80  # Strong trend — max deployment
-            elif nifty_ret_5d < 0:
-                alloc = 0.65  # Fading bull — reduce
+    if rolling_ic is not None:
+        ic_score = max(0, min(1, (rolling_ic + 0.02) / 0.04))
+        scores.append(ic_score)
+        weights.append(0.50)
 
-    elif regime == Regime.NEUTRAL:
-        if nifty_ret_5d is not None and nifty_ret_5d > 0.01:
-            alloc = 0.65  # Trending toward bull
+    if nifty_ret_5d is not None:
+        mom_score = max(0, min(1, (nifty_ret_5d + 0.015) / 0.03))
+        scores.append(mom_score)
+        weights.append(0.50)
 
-    return alloc
+    confidence = sum(s * w for s, w in zip(scores, weights)) / sum(weights) if scores else 0.5
+
+    # Scale: confidence 0→base-15%, 0.5→base, 1→base+15%
+    alloc = base + (confidence - 0.5) * 0.30
+
+    # Soft drawdown curve: alloc *= (1 - k * drawdown)
+    if current_drawdown > 0.03:
+        alloc *= (1.0 - dd_k * current_drawdown)
+
+    # Regime-specific floor and cap
+    return max(floor, min(0.85, alloc))
 
 
 def run_regime_backtest(
@@ -273,8 +282,12 @@ def run_regime_backtest(
         nifty_5d = nifty_ret_5d_series.get(rebal_date, None)
         nifty_5d = float(nifty_5d) if nifty_5d is not None and not np.isnan(nifty_5d) else None
 
-        # Dynamic allocation
-        alloc = _compute_backtest_allocation(regime, recent_ic, nifty_5d)
+        # Current drawdown for dampening
+        peak_value = max(e["equity"] for e in equity_curve) if equity_curve else capital
+        current_dd = max(0, (peak_value - portfolio_value) / peak_value)
+
+        # Dynamic allocation (continuous, confidence-scored)
+        alloc = _compute_backtest_allocation(regime, recent_ic, nifty_5d, current_dd)
         total_utilization.append(alloc)
 
         scores_row = score.loc[rebal_date].dropna()

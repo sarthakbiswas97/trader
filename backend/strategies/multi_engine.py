@@ -64,12 +64,68 @@ class EngineState:
     active: bool = False
 
 
-# Base allocation by regime (before dynamic adjustments)
-BASE_ALLOCATIONS = {
-    Regime.BULL: {"largecap": 0.35, "midcap": 0.40, "cash": 0.25},
-    Regime.NEUTRAL: {"largecap": 0.45, "midcap": 0.15, "cash": 0.40},
-    Regime.WEAK: {"largecap": 0.15, "midcap": 0.10, "cash": 0.75},
+# Regime base targets (center of range for each regime)
+REGIME_TARGETS = {
+    Regime.BULL: {"total": 0.75, "midcap_share": 0.55, "floor": 0.25, "dd_k": 0.5},
+    Regime.NEUTRAL: {"total": 0.60, "midcap_share": 0.25, "floor": 0.15, "dd_k": 0.7},
+    Regime.WEAK: {"total": 0.25, "midcap_share": 0.40, "floor": 0.08, "dd_k": 1.0},
 }
+
+# Hard limits
+MAX_EXPOSURE_CAP = 0.85           # Never exceed 85%
+BASE_MIDCAP_CAP = 0.55            # Midcap base cap (adjusted by volatility/DD)
+
+
+def compute_confidence(
+    rolling_ic: float | None = None,
+    rolling_wr: float | None = None,
+    nifty_ret_5d: float | None = None,
+    breadth_pct: float | None = None,
+) -> float:
+    """
+    Compute a confidence score from 0.0 to 1.0.
+
+    This is proto-RL: continuous signal → continuous sizing.
+
+    Components (weighted):
+      IC signal strength:   40%  — is our ranking still predictive?
+      Win rate:             25%  — are recent trades working?
+      Momentum:             20%  — is market trending favorably?
+      Breadth:              15%  — are stocks broadly participating?
+    """
+    scores = []
+    weights = []
+
+    # IC component: map from [-0.05, +0.05] → [0, 1]
+    if rolling_ic is not None:
+        ic_score = max(0, min(1, (rolling_ic + 0.02) / 0.04))  # -0.02 → 0.0, +0.02 → 1.0
+        scores.append(ic_score)
+        weights.append(0.40)
+
+    # Win rate component: map from [0.3, 0.7] → [0, 1]
+    if rolling_wr is not None:
+        wr_score = max(0, min(1, (rolling_wr - 0.35) / 0.30))  # 35% → 0.0, 65% → 1.0
+        scores.append(wr_score)
+        weights.append(0.25)
+
+    # Momentum component: map from [-0.03, +0.03] → [0, 1]
+    if nifty_ret_5d is not None:
+        mom_score = max(0, min(1, (nifty_ret_5d + 0.015) / 0.03))
+        scores.append(mom_score)
+        weights.append(0.20)
+
+    # Breadth component: map from [0.3, 0.7] → [0, 1]
+    if breadth_pct is not None:
+        breadth_score = max(0, min(1, (breadth_pct - 0.35) / 0.30))
+        scores.append(breadth_score)
+        weights.append(0.15)
+
+    if not scores:
+        return 0.5  # No data — neutral confidence
+
+    # Weighted average
+    total_weight = sum(weights)
+    return sum(s * w for s, w in zip(scores, weights)) / total_weight
 
 
 def compute_dynamic_allocation(
@@ -77,57 +133,68 @@ def compute_dynamic_allocation(
     rolling_ic: float | None = None,
     rolling_wr: float | None = None,
     nifty_ret_5d: float | None = None,
+    breadth_pct: float | None = None,
+    current_drawdown_pct: float = 0.0,
 ) -> dict[str, float]:
     """
-    Compute dynamic capital allocation based on signal health.
+    Continuous confidence-scored capital allocation with regime-aware tuning.
 
-    Upgrade 1: WEAK allocation scales with IC/WR
-      IC strong → 25-30%   IC weak → 10-15%   IC negative → 0%
-
-    Upgrade 2: Midcap scales with market momentum
-      Market trending up → increase midcap   Down → reduce
-
-    Returns:
-        {"largecap": float, "midcap": float, "cash": float} summing to 1.0
+    Process:
+      1. Confidence score (0-1) from IC + WR + momentum + breadth
+      2. Scale total exposure around regime base
+      3. Soft drawdown curve: allocation *= (1 - k * drawdown)
+         k is regime-weighted (BULL=0.5 gentle, WEAK=1.0 aggressive)
+      4. Regime-specific floor (BULL 25%, NEUTRAL 15%, WEAK 8%)
+      5. Adaptive midcap cap based on drawdown
     """
-    alloc = dict(BASE_ALLOCATIONS[regime])
+    target = REGIME_TARGETS[regime]
 
-    if regime == Regime.WEAK:
-        # Dynamic sizing: scale WEAK exposure based on signal confidence
-        if rolling_ic is not None:
-            if rolling_ic < -0.01:
-                # IC negative — signal is broken, go full cash
-                alloc = {"largecap": 0.0, "midcap": 0.0, "cash": 1.0}
-            elif rolling_ic < 0.005:
-                # IC weak — minimal exposure
-                alloc = {"largecap": 0.10, "midcap": 0.05, "cash": 0.85}
-            elif rolling_ic > 0.02:
-                # IC strong — confident deployment
-                alloc = {"largecap": 0.20, "midcap": 0.10, "cash": 0.70}
-            # else: keep base (0.15 / 0.10 / 0.75)
+    # 1. Confidence score (continuous 0-1)
+    confidence = compute_confidence(rolling_ic, rolling_wr, nifty_ret_5d, breadth_pct)
 
-        # Win rate override
-        if rolling_wr is not None and rolling_wr < 0.45:
-            # Losing streak — cut WEAK exposure regardless of IC
-            alloc = {"largecap": 0.05, "midcap": 0.0, "cash": 0.95}
+    # 2. Scale total exposure: base ± 15% based on confidence
+    adjustment = (confidence - 0.5) * 0.30
+    total_exposure = target["total"] + adjustment
 
-    elif regime == Regime.BULL:
-        # Upgrade 2: Scale midcap with market momentum
-        if nifty_ret_5d is not None:
-            if nifty_ret_5d > 0.02:
-                # Strong uptrend — max midcap (return engine)
-                alloc = {"largecap": 0.30, "midcap": 0.50, "cash": 0.20}
-            elif nifty_ret_5d < 0:
-                # Bull but fading — reduce midcap, increase cash
-                alloc = {"largecap": 0.40, "midcap": 0.25, "cash": 0.35}
+    # 3. Soft drawdown curve — regime-weighted
+    #    BULL: k=0.5 (gentle — don't cut winners early)
+    #    NEUTRAL: k=0.7
+    #    WEAK: k=1.0 (aggressive — protect hard in stress)
+    if current_drawdown_pct > 0.03:
+        dd_k = target["dd_k"]
+        total_exposure *= (1.0 - dd_k * current_drawdown_pct)
 
-    elif regime == Regime.NEUTRAL:
-        # Scale midcap in NEUTRAL based on momentum direction
-        if nifty_ret_5d is not None and nifty_ret_5d > 0.01:
-            # Trending toward bull — add some midcap
-            alloc = {"largecap": 0.40, "midcap": 0.25, "cash": 0.35}
+    # 4. Regime-specific floor and cap
+    floor = target["floor"]
+    total_exposure = max(floor, min(MAX_EXPOSURE_CAP, total_exposure))
 
-    return alloc
+    # 5. Split between largecap and midcap
+    midcap_share = target["midcap_share"]
+
+    # Momentum scaling: strong trend → more midcap
+    if nifty_ret_5d is not None:
+        mom_adj = max(-0.15, min(0.15, nifty_ret_5d * 5))
+        midcap_share += mom_adj
+
+    # Adaptive midcap cap: tighten when in drawdown or low confidence
+    midcap_cap = BASE_MIDCAP_CAP
+    if current_drawdown_pct > 0.05:
+        # Reduce midcap cap as DD increases (midcap is more volatile)
+        midcap_cap = max(0.25, BASE_MIDCAP_CAP - current_drawdown_pct)
+    if confidence < 0.3:
+        midcap_cap = min(midcap_cap, 0.35)
+
+    midcap_share = max(0.10, min(midcap_cap, midcap_share))
+
+    midcap_alloc = total_exposure * midcap_share
+    largecap_alloc = total_exposure - midcap_alloc
+    cash_alloc = 1.0 - total_exposure
+
+    return {
+        "largecap": round(max(0, largecap_alloc), 3),
+        "midcap": round(max(0, midcap_alloc), 3),
+        "cash": round(max(0, cash_alloc), 3),
+    }
 
 
 class MultiEngine:
@@ -216,14 +283,23 @@ class MultiEngine:
         # 2. Compute dynamic allocation based on signal health
         rolling_wr = self._compute_rolling_wr()
         nifty_ret_5d = self._get_nifty_5d_return()
+        breadth = self._compute_breadth() if self.kite else None
+        current_dd = self._compute_current_drawdown()
 
         allocation = compute_dynamic_allocation(
             regime=regime,
             rolling_ic=self.ic_history[-1]["ic"] if self.ic_history else None,
             rolling_wr=rolling_wr,
             nifty_ret_5d=nifty_ret_5d,
+            breadth_pct=breadth,
+            current_drawdown_pct=current_dd,
         )
         result["allocation"] = {k: v * 100 for k, v in allocation.items()}
+        result["confidence"] = compute_confidence(
+            self.ic_history[-1]["ic"] if self.ic_history else None,
+            rolling_wr, nifty_ret_5d, breadth,
+        )
+        result["drawdown_pct"] = current_dd
 
         # 3. Fetch prices for all symbols
         prices = self._fetch_prices()
@@ -616,8 +692,24 @@ class MultiEngine:
         return exits
 
     # =========================================================================
-    # Signal Health (for dynamic allocation)
+    # Signal Health & Portfolio Metrics (for dynamic allocation)
     # =========================================================================
+
+    def _compute_current_drawdown(self) -> float:
+        """Compute current drawdown from peak portfolio value."""
+        if not self.daily_log:
+            return 0.0
+
+        values = [entry.get("portfolio_value", self.total_capital) for entry in self.daily_log]
+        values.append(self.cash + sum(es.capital for es in self.engine_states.values()))
+
+        peak = max(values)
+        current = values[-1]
+
+        if peak <= 0:
+            return 0.0
+
+        return max(0.0, (peak - current) / peak)
 
     def _compute_rolling_wr(self) -> float | None:
         """Compute rolling win rate across all engines (last 20 trades)."""
@@ -739,6 +831,9 @@ class MultiEngine:
         print(f"  Portfolio: ₹{result['portfolio_value']:,.0f}")
         print(f"  Cash: ₹{result['cash']:,.0f}")
         print(f"  Capital Util: {result.get('capital_utilization', 0):.0f}%")
+        print(f"  Confidence:  {result.get('confidence', 0.5):.2f}")
+        dd = result.get("drawdown_pct", 0)
+        print(f"  Drawdown:    {dd:.1f}%{'  ⚠ SCALING DOWN' if dd > 3.0 else ''}")
         print(f"  Total P&L: ₹{total_pnl:,.0f} ({total_pnl/self.total_capital*100:+.1f}%)")
 
         if result.get("rolling_ic") is not None:
@@ -870,9 +965,12 @@ class MultiEngine:
         latest_ic = self.ic_history[-1]["ic"] if self.ic_history else None
         rolling_wr = self._compute_rolling_wr()
         nifty_ret_5d = self._get_nifty_5d_return()
+        current_dd = self._compute_current_drawdown()
         alloc = compute_dynamic_allocation(
-            self.current_regime, latest_ic, rolling_wr, nifty_ret_5d
+            self.current_regime, latest_ic, rolling_wr, nifty_ret_5d,
+            current_drawdown_pct=current_dd,
         )
+        confidence = compute_confidence(latest_ic, rolling_wr, nifty_ret_5d)
 
         # Capital utilization
         portfolio_value = self.cash + sum(es.capital for es in self.engine_states.values())
@@ -891,6 +989,8 @@ class MultiEngine:
             "total_trades": total_trades,
             "win_rate": total_wins / total_trades * 100 if total_trades > 0 else 0,
             "rolling_ic": latest_ic,
+            "confidence": confidence,
+            "drawdown_pct": current_dd * 100,
             "capital_utilization": cap_util,
             "engines": engines_status,
         }
