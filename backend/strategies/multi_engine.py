@@ -64,27 +64,70 @@ class EngineState:
     active: bool = False
 
 
-# Capital allocation by regime
-# Key insight: IC is STRONGEST in WEAK regime (+0.036 midcap, +0.024 largecap)
-# Sitting 100% cash in WEAK wastes our best signal.
-# Midcap is the return engine (IC=+0.025, +97% return, Sharpe 1.09)
-ALLOCATIONS = {
-    Regime.BULL: {
-        "largecap": 0.35,
-        "midcap": 0.40,
-        "cash": 0.25,
-    },
-    Regime.NEUTRAL: {
-        "largecap": 0.45,
-        "midcap": 0.15,
-        "cash": 0.40,
-    },
-    Regime.WEAK: {
-        "largecap": 0.15,
-        "midcap": 0.10,
-        "cash": 0.75,
-    },
+# Base allocation by regime (before dynamic adjustments)
+BASE_ALLOCATIONS = {
+    Regime.BULL: {"largecap": 0.35, "midcap": 0.40, "cash": 0.25},
+    Regime.NEUTRAL: {"largecap": 0.45, "midcap": 0.15, "cash": 0.40},
+    Regime.WEAK: {"largecap": 0.15, "midcap": 0.10, "cash": 0.75},
 }
+
+
+def compute_dynamic_allocation(
+    regime: Regime,
+    rolling_ic: float | None = None,
+    rolling_wr: float | None = None,
+    nifty_ret_5d: float | None = None,
+) -> dict[str, float]:
+    """
+    Compute dynamic capital allocation based on signal health.
+
+    Upgrade 1: WEAK allocation scales with IC/WR
+      IC strong → 25-30%   IC weak → 10-15%   IC negative → 0%
+
+    Upgrade 2: Midcap scales with market momentum
+      Market trending up → increase midcap   Down → reduce
+
+    Returns:
+        {"largecap": float, "midcap": float, "cash": float} summing to 1.0
+    """
+    alloc = dict(BASE_ALLOCATIONS[regime])
+
+    if regime == Regime.WEAK:
+        # Dynamic sizing: scale WEAK exposure based on signal confidence
+        if rolling_ic is not None:
+            if rolling_ic < -0.01:
+                # IC negative — signal is broken, go full cash
+                alloc = {"largecap": 0.0, "midcap": 0.0, "cash": 1.0}
+            elif rolling_ic < 0.005:
+                # IC weak — minimal exposure
+                alloc = {"largecap": 0.10, "midcap": 0.05, "cash": 0.85}
+            elif rolling_ic > 0.02:
+                # IC strong — confident deployment
+                alloc = {"largecap": 0.20, "midcap": 0.10, "cash": 0.70}
+            # else: keep base (0.15 / 0.10 / 0.75)
+
+        # Win rate override
+        if rolling_wr is not None and rolling_wr < 0.45:
+            # Losing streak — cut WEAK exposure regardless of IC
+            alloc = {"largecap": 0.05, "midcap": 0.0, "cash": 0.95}
+
+    elif regime == Regime.BULL:
+        # Upgrade 2: Scale midcap with market momentum
+        if nifty_ret_5d is not None:
+            if nifty_ret_5d > 0.02:
+                # Strong uptrend — max midcap (return engine)
+                alloc = {"largecap": 0.30, "midcap": 0.50, "cash": 0.20}
+            elif nifty_ret_5d < 0:
+                # Bull but fading — reduce midcap, increase cash
+                alloc = {"largecap": 0.40, "midcap": 0.25, "cash": 0.35}
+
+    elif regime == Regime.NEUTRAL:
+        # Scale midcap in NEUTRAL based on momentum direction
+        if nifty_ret_5d is not None and nifty_ret_5d > 0.01:
+            # Trending toward bull — add some midcap
+            alloc = {"largecap": 0.40, "midcap": 0.25, "cash": 0.35}
+
+    return alloc
 
 
 class MultiEngine:
@@ -161,6 +204,7 @@ class MultiEngine:
             "portfolio_value": 0,
             "cash": 0,
             "rolling_ic": None,
+            "capital_utilization": 0,
         }
 
         # 1. Classify regime
@@ -169,8 +213,17 @@ class MultiEngine:
         result["regime"] = regime.value
         logger.info(f"Regime: {regime.value}")
 
-        # 2. Get allocation for current regime
-        allocation = ALLOCATIONS[regime]
+        # 2. Compute dynamic allocation based on signal health
+        rolling_wr = self._compute_rolling_wr()
+        nifty_ret_5d = self._get_nifty_5d_return()
+
+        allocation = compute_dynamic_allocation(
+            regime=regime,
+            rolling_ic=self.ic_history[-1]["ic"] if self.ic_history else None,
+            rolling_wr=rolling_wr,
+            nifty_ret_5d=nifty_ret_5d,
+        )
+        result["allocation"] = {k: v * 100 for k, v in allocation.items()}
 
         # 3. Fetch prices for all symbols
         prices = self._fetch_prices()
@@ -256,13 +309,18 @@ class MultiEngine:
 
             result["engines"][engine_name] = engine_result
 
-        # 7. Compute total portfolio value
+        # 7. Compute total portfolio value + capital utilization
         total = self.cash
+        invested = 0
         for state in self.engine_states.values():
             total += state.capital
-            total += self._open_position_value(state, prices)
+            pos_value = self._open_position_value(state, prices)
+            total += pos_value
+            invested += pos_value
+
         result["portfolio_value"] = total
         result["cash"] = self.cash
+        result["capital_utilization"] = invested / total * 100 if total > 0 else 0
 
         # 8. Log and save
         self.daily_log.append(result)
@@ -558,6 +616,45 @@ class MultiEngine:
         return exits
 
     # =========================================================================
+    # Signal Health (for dynamic allocation)
+    # =========================================================================
+
+    def _compute_rolling_wr(self) -> float | None:
+        """Compute rolling win rate across all engines (last 20 trades)."""
+        all_trades = []
+        for es in self.engine_states.values():
+            all_trades.extend(es.trade_history)
+
+        if len(all_trades) < 10:
+            return None
+
+        recent = all_trades[-20:]
+        return sum(1 for t in recent if t.get("win")) / len(recent)
+
+    def _get_nifty_5d_return(self) -> float | None:
+        """Get NIFTY 5-day return for midcap scaling."""
+        if self.kite:
+            try:
+                nifty = self.kite.ohlc(["NSE:NIFTY 50"])
+                close = nifty.get("NSE:NIFTY 50", {}).get("last_price", 0)
+                nifty_path = _DATA_DIR / "index" / "NIFTY50_daily.csv"
+                if nifty_path.exists() and close > 0:
+                    df = pd.read_csv(nifty_path)
+                    if len(df) >= 5:
+                        return (close - df["close"].iloc[-5]) / df["close"].iloc[-5]
+            except Exception:
+                pass
+
+        # Fallback: saved data
+        nifty_path = _DATA_DIR / "index" / "NIFTY50_daily.csv"
+        if nifty_path.exists():
+            df = pd.read_csv(nifty_path)
+            if len(df) >= 5:
+                return (df["close"].iloc[-1] - df["close"].iloc[-5]) / df["close"].iloc[-5]
+
+        return None
+
+    # =========================================================================
     # Kill Switches
     # =========================================================================
 
@@ -641,6 +738,7 @@ class MultiEngine:
         print(f"  Regime: {result['regime']}")
         print(f"  Portfolio: ₹{result['portfolio_value']:,.0f}")
         print(f"  Cash: ₹{result['cash']:,.0f}")
+        print(f"  Capital Util: {result.get('capital_utilization', 0):.0f}%")
         print(f"  Total P&L: ₹{total_pnl:,.0f} ({total_pnl/self.total_capital*100:+.1f}%)")
 
         if result.get("rolling_ic") is not None:
@@ -767,10 +865,19 @@ class MultiEngine:
             }
 
         regime_info = self.regime_classifier.get_status()
-        alloc = ALLOCATIONS.get(self.current_regime, ALLOCATIONS[Regime.NEUTRAL])
 
-        # Latest rolling IC
+        # Compute current dynamic allocation
         latest_ic = self.ic_history[-1]["ic"] if self.ic_history else None
+        rolling_wr = self._compute_rolling_wr()
+        nifty_ret_5d = self._get_nifty_5d_return()
+        alloc = compute_dynamic_allocation(
+            self.current_regime, latest_ic, rolling_wr, nifty_ret_5d
+        )
+
+        # Capital utilization
+        portfolio_value = self.cash + sum(es.capital for es in self.engine_states.values())
+        invested = sum(es.capital for es in self.engine_states.values() if es.positions)
+        cap_util = invested / portfolio_value * 100 if portfolio_value > 0 else 0
 
         return {
             "regime": self.current_regime.value,
@@ -778,13 +885,12 @@ class MultiEngine:
             "allocation": {k: v * 100 for k, v in alloc.items()},
             "total_capital": self.total_capital,
             "cash": self.cash,
-            "portfolio_value": self.cash + sum(
-                es.capital for es in self.engine_states.values()
-            ),
+            "portfolio_value": portfolio_value,
             "total_pnl": total_pnl,
             "total_pnl_pct": total_pnl / self.total_capital * 100,
             "total_trades": total_trades,
             "win_rate": total_wins / total_trades * 100 if total_trades > 0 else 0,
             "rolling_ic": latest_ic,
+            "capital_utilization": cap_util,
             "engines": engines_status,
         }

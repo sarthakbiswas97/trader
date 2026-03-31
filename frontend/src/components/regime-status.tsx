@@ -208,6 +208,12 @@ export function RegimeStatus() {
               {status.rolling_ic !== null ? status.rolling_ic.toFixed(3) : "—"}
             </p>
           </div>
+          <div className="text-center">
+            <p className="text-[10px] text-muted-foreground">Utilization</p>
+            <p className="text-sm font-semibold">
+              {status.capital_utilization?.toFixed(0) ?? "0"}%
+            </p>
+          </div>
           <div className="text-right">
             <p className="text-[10px] text-muted-foreground">Cash</p>
             <p className="text-sm font-medium">{formatCurrency(status.cash)}</p>

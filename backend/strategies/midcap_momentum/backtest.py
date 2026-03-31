@@ -68,6 +68,43 @@ def _classify_regime_series(nifty_df: pd.DataFrame) -> pd.Series:
     return pd.Series(regimes)
 
 
+def _compute_backtest_allocation(
+    regime: Regime,
+    rolling_ic: float | None,
+    nifty_ret_5d: float | None,
+) -> float:
+    """
+    Dynamic allocation for backtest — matches production logic.
+
+    Returns total invested fraction (0.0 - 1.0).
+    """
+    # Base allocation
+    base = {Regime.BULL: 0.75, Regime.NEUTRAL: 0.60, Regime.WEAK: 0.25}
+    alloc = base[regime]
+
+    if regime == Regime.WEAK:
+        if rolling_ic is not None:
+            if rolling_ic < -0.01:
+                alloc = 0.0
+            elif rolling_ic < 0.005:
+                alloc = 0.15
+            elif rolling_ic > 0.02:
+                alloc = 0.30
+
+    elif regime == Regime.BULL:
+        if nifty_ret_5d is not None:
+            if nifty_ret_5d > 0.02:
+                alloc = 0.80  # Strong trend — max deployment
+            elif nifty_ret_5d < 0:
+                alloc = 0.65  # Fading bull — reduce
+
+    elif regime == Regime.NEUTRAL:
+        if nifty_ret_5d is not None and nifty_ret_5d > 0.01:
+            alloc = 0.65  # Trending toward bull
+
+    return alloc
+
+
 def run_regime_backtest(
     holding_days: int = 5,
     top_n: int = 10,
@@ -203,20 +240,21 @@ def run_regime_backtest(
         t_all = mean_all / (np.std(all_ic_vals) / np.sqrt(len(all_ic_vals)))
         print(f"  {'ALL':<10} {mean_all:>10.4f} {np.mean([x > 0 for x in all_ic_vals])*100:>9.0f}% {t_all:>10.2f} {len(all_ic_vals):>6}")
 
-    # Regime-based allocation (matches production multi-engine)
-    # Key: IC is strongest in WEAK regime — don't sit 100% cash
-    ALLOC_BY_REGIME = {
-        Regime.BULL: 0.75,     # 75% invested
-        Regime.NEUTRAL: 0.60,  # 60% invested
-        Regime.WEAK: 0.25,     # 25% invested (exploit strong IC, but cautious)
-    }
-
-    # Simulate portfolio with regime-aware allocation
+    # Dynamic allocation: scales with NIFTY momentum (matches production)
+    # Simulate portfolio with dynamic regime-aware allocation
     portfolio_value = capital
     trade_log = []
     equity_curve = [{"date": str(common_dates[lookback]), "equity": capital}]
+    total_utilization = []
 
     rebalance_dates = common_dates[lookback::holding_days]
+
+    # Pre-compute NIFTY 5d returns for midcap scaling
+    nifty_closes = nifty_df["close"] if not nifty_df.empty else pd.Series()
+    nifty_ret_5d_series = nifty_closes.pct_change(5) if len(nifty_closes) > 5 else pd.Series()
+
+    # Track rolling IC for dynamic WEAK sizing
+    running_ics = []
 
     for i, rebal_date in enumerate(rebalance_dates[:-1]):
         if rebal_date not in score.index:
@@ -224,7 +262,20 @@ def run_regime_backtest(
 
         next_rebal = rebalance_dates[i + 1]
         regime = regime_series.get(rebal_date, Regime.NEUTRAL)
-        alloc = ALLOC_BY_REGIME.get(regime, 0.50)
+
+        # Compute running IC from recent predictions
+        if len(running_ics) > 5:
+            recent_ic = np.mean(running_ics[-20:])
+        else:
+            recent_ic = None
+
+        # Get NIFTY 5d return for this date
+        nifty_5d = nifty_ret_5d_series.get(rebal_date, None)
+        nifty_5d = float(nifty_5d) if nifty_5d is not None and not np.isnan(nifty_5d) else None
+
+        # Dynamic allocation
+        alloc = _compute_backtest_allocation(regime, recent_ic, nifty_5d)
+        total_utilization.append(alloc)
 
         scores_row = score.loc[rebal_date].dropna()
         if len(scores_row) < top_n:
@@ -263,6 +314,16 @@ def run_regime_backtest(
                     "portfolio": portfolio_value,
                 })
 
+                # Track IC for dynamic WEAK sizing
+                if rebal_date in fwd_5d.index:
+                    fwd = fwd_5d.loc[rebal_date].dropna()
+                    sc = score.loc[rebal_date].dropna()
+                    common_syms = sc.index.intersection(fwd.index)
+                    if len(common_syms) >= 10:
+                        period_ic, _ = spearmanr(sc[common_syms], fwd[common_syms])
+                        if not np.isnan(period_ic):
+                            running_ics.append(period_ic)
+
         equity_curve.append({"date": str(next_rebal), "equity": portfolio_value})
 
     # Results
@@ -291,7 +352,9 @@ def run_regime_backtest(
     print(f"  P&L:           ₹{total_pnl:,.0f} ({total_ret:+.2f}%)")
     print(f"  Sharpe:        {sharpe:.2f}")
     print(f"  Max DD:        {max_dd:.1f}%")
+    avg_util = np.mean(total_utilization) * 100 if total_utilization else 0
     print(f"  Win Rate:      {win_rate:.0f}% ({winning}/{trading})")
+    print(f"  Avg Util:      {avg_util:.0f}% capital deployed")
     print(f"  Reduced Alloc: {reduced_periods}/{len(trade_log)} periods (alloc < 50%)")
 
     # Per-regime P&L
