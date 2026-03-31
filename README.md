@@ -1,158 +1,107 @@
 # Autonomous Trading System
 
-An ML-powered trading system for Indian equity markets (NIFTY 100) using Zerodha Kite Connect. Built through systematic research — testing 6+ strategies across 4 years of data to find a validated edge.
+A research-backed trading system for Indian equity markets (NIFTY 100) using Zerodha Kite Connect. Built through systematic research — tested 6 strategies, found one that works, then iterated through 4 versions of allocation logic to maximize capital efficiency.
 
-## How It Works
+## The Edge
 
-```
-                    ┌─────────────────────────┐
-                    │     MARKET REGIME GATE   │
-                    │  NIFTY < -0.5% → BLOCK  │
-                    │  Breadth weak → BLOCK    │
-                    │  5d decline > 3% → BLOCK │
-                    └──────────┬──────────────┘
-                               │ Market OK?
-                               ▼
-                    ┌─────────────────────────┐
-                    │   DAILY REVERSAL SIGNAL  │
-                    │                         │
-                    │  Rank NIFTY 100 stocks  │
-                    │  by 5d + 10d + 21d      │
-                    │  past returns           │
-                    │                         │
-                    │  Buy top 10 biggest     │
-                    │  recent losers          │
-                    └──────────┬──────────────┘
-                               │
-                    ┌──────────┴──────────────┐
-                    │                         │
-              ┌─────┴─────┐           ┌───────┴───────┐
-              │   SWING   │           │   INTRADAY    │
-              │   (CNC)   │           │   (MIS)       │
-              │           │           │               │
-              │ Hold 5    │           │ VWAP cross or │
-              │ trading   │           │ OR low hold   │
-              │ days      │           │ confirmation  │
-              │           │           │               │
-              │ Rebalance │           │ Exit same day │
-              │ weekly    │           │ or convert    │
-              └───────────┘           │ to CNC        │
-                                      └───────────────┘
-                               │
-                    ┌──────────┴──────────────┐
-                    │      KILL SWITCH        │
-                    │                         │
-                    │  Rolling 20-trade       │
-                    │  win rate < 50%         │
-                    │  → Pause all trading    │
-                    └─────────────────────────┘
-```
-
-## The Edge (Validated)
-
-**Short-term reversal in Indian large-cap equities:** Stocks that fell the most over the past 5-21 days tend to bounce back over the next 5 days.
+**Short-term reversal in Indian equities.** Stocks that fall the most over the past 5–21 days tend to bounce back within 5 trading days. This is a structural behavioral effect — driven by human psychology (panic selling → value buying), not patterns that algorithms can arbitrage away.
 
 | Metric | Value |
 |--------|-------|
-| Signal | Daily reversal factor |
-| IC (Information Coefficient) | +0.029 (t-stat = 5.0) |
-| Universe | NIFTY 100 (96 stocks) |
+| Signal | Daily cross-sectional reversal |
+| Universe | 96 stocks (NIFTY 50 + NIFTY 100 Extra) |
 | Holding period | 5 trading days |
-| Backtest return (4 years) | +60% total (~12.5% CAGR) |
-| Win rate | 59% |
-| Max drawdown | 27.6% (17.6% with kill switch) |
-| Years profitable | 4 out of 5 (80%) |
+| IC (Information Coefficient) | +0.020 large-cap, +0.025 midcap |
+| Win rate | 54–58% |
+| Backtest return (5.4 years) | +40% combined (v4.2 locked baseline) |
+
+## System Architecture
+
+```
+Market Data → Regime Classifier → Dynamic Allocation → Engines → Execution
+                  │                      │                 │
+            BULL/NEUTRAL/WEAK    Confidence Score    Large-cap + Midcap
+                  │                      │            Reversal Engines
+            Adjusts exposure     IC + WR + Momentum        │
+            continuously         + Breadth → 0-1       Buy top losers
+                                                       Hold 5 days
+                                        │
+                                  Drawdown Dampening
+                                  Recovery Boost
+                                  Kill Switch
+```
+
+### Multi-Engine Design
+
+Two engines running the same alpha (reversal) on different universes:
+
+| Engine | Universe | Stocks | IC | Backtest Return |
+|--------|----------|--------|-----|----------------|
+| Large-Cap | NIFTY 50 | 48 | +0.020 | +38% |
+| Midcap | NIFTY 100 Extra | 48 | +0.025 | +108% |
+
+### Dynamic Allocation (v4.2)
+
+Capital allocation adapts continuously based on:
+- **Regime** — Bull/Neutral/Weak determines base exposure
+- **Confidence score** — IC + win rate + momentum + breadth → smooth 0-1 scaling
+- **Drawdown dampening** — Regime-weighted (gentle in bull, aggressive in weak)
+- **Recovery boost** — When drawdown recovering AND signal improving, lean in faster
+- **Midcap cap** — Adaptive ceiling tightens during stress
+
+| Regime | Exposure Range | Behavior |
+|--------|---------------|----------|
+| Bull | 65–85% | Aggressive, midcap-heavy |
+| Neutral | 50–75% | Balanced, largecap-heavy |
+| Weak | 8–40% | Defensive but active (IC is strongest here) |
+
+## Version History
+
+| Version | Change | Combined Return |
+|---------|--------|----------------|
+| v1 | Core reversal + 100% cash in weak | +26% |
+| v2 | Deploy capital in weak regime | +38% (+44% vs v1) |
+| v3 | Step-based IC/momentum sizing | +40% |
+| v4 | Continuous confidence scoring | +38% (robustness tradeoff) |
+| **v4.2** | **Soft DD + regime floors + recovery boost** | **+40% (locked baseline)** |
+
+Every improvement came from better capital allocation — the signal never changed.
 
 ## Research Journey
 
-We tested 6+ strategies before finding this edge. Each failure taught us something:
+Tested 6 strategies before finding the edge:
 
-```
-Strategy                   Trades   P&L        PF     Why It Failed
-─────────────────────────────────────────────────────────────────────
-1. ML Prediction (5-min)   1,635   -₹6,088    0.29   No signal in features
-2. Breakout (5-min)          200   -₹1,684    0.42   Fakeouts, no follow-through
-3. Breakout + Regime          22     -₹128    0.69   Too few trades
-4. Mean Reversion (5-min)  1,064   -₹8,693    0.10   Signal too weak after costs
-5. Trend Following (30-min)  405   -₹4,011    0.32   No intraday trend persistence
-6. Cross-Sectional ML     831K rows  IC≈0       —     Features have no intraday signal
+| # | Strategy | Result | Why |
+|---|----------|--------|-----|
+| 1 | ML Prediction (5-min) | Failed | No signal in OHLCV features |
+| 2 | Breakout Detection | Failed | Fakeouts, no follow-through |
+| 3 | Mean Reversion (5-min) | Failed | Signal too weak after costs |
+| 4 | Trend Following (30-min) | Failed | No intraday trend persistence |
+| 5 | Cross-Sectional ML | Failed | IC ≈ 0 at intraday resolution |
+| 6 | **Daily Reversal** | **Validated** | Structural behavioral effect |
 
-✅ Daily Reversal (5-day)    187   +₹60,337   1.60   WORKS — structural market effect
-```
-
-### Key Discovery
-
-```
- Intraday (5-min candles)          Daily (holding 5 days)
-┌─────────────────────────┐    ┌─────────────────────────┐
-│                         │    │                         │
-│  IC ≈ 0 (no signal)    │    │  IC = +0.029 (signal!)  │
-│  Every strategy loses   │    │  4/5 years profitable   │
-│  Costs eat any edge     │    │  Costs are negligible   │
-│                         │    │                         │
-│  DEAD ZONE for retail   │    │  VIABLE for retail      │
-│                         │    │                         │
-└─────────────────────────┘    └─────────────────────────┘
-```
-
-**Why intraday failed:** Indian large-cap stocks are too efficient at 5-min resolution. Price-derived features (RSI, MACD, breakout patterns) are already arbitraged by institutions and HFT. The signal-to-noise ratio is too low to overcome transaction costs.
-
-**Why daily works:** Short-term reversal is a structural behavioral effect — stocks that fall hard attract value buyers, leading to a 5-day bounce. This effect has been documented academically and persists because it's driven by human psychology, not arbitrageable patterns.
-
-## Performance by Market Regime
-
-The reversal signal works across all market conditions, but absolute returns depend on regime:
-
-```
-Regime      IC        Years          P&L        Behavior
-────────────────────────────────────────────────────────────
-Bull      +0.020    2022-2024    +₹55,000    Buy dips → strong bounces
-Bear      +0.055    2026 (Q1)   -₹17,000    Buy dips → still falling
-Sideways  +0.031    Mixed        +₹8,000    Moderate bounces
-
-Key: IC is HIGHEST in bear markets (0.055) — the signal is strongest
-when fear is highest. But absolute returns are negative because even
-the "best" dips continue falling in a crash.
-
-Solution: Market regime gate blocks entries when NIFTY falls > 0.5%
-```
-
-## Walk-Forward Validation (Unseen Data)
-
-Each year tested independently — the system was never tuned on this data:
-
-```
-Year    P&L         Win Rate    Max DD     IC        Status
-──────────────────────────────────────────────────────────────
-2022   +₹14,872      59%        7.8%    +0.052     ✓ Profitable
-2023   +₹49,647      75%        9.6%    +0.055     ✓ Profitable
-2024   +₹14,134      58%       17.7%    +0.011     ✓ Profitable
-2025   +₹24,655      49%        8.1%    +0.045     ✓ Profitable
-2026   -₹17,291      14%       20.8%    -0.110     ✗ Bear market
-
-Consistency: 4/5 years profitable (80%)
-```
+**Key finding:** Indian large-cap stocks are too efficient at 5-minute resolution. Every intraday strategy loses money. The edge exists at the daily level where behavioral effects (overreaction, panic selling) create predictable 5-day bounces.
 
 ## Quick Start
 
 ```bash
-# Install everything
+# Install
 make install
 
-# Authenticate with Zerodha (daily, before 9:15 AM)
+# Authenticate with Zerodha (daily)
 make auth
 
-# Run daily reversal strategy (after 9:30 AM)
-make reversal
+# Start backend + frontend
+make dev
 
-# Check current status
-make reversal-status
+# Run multi-engine daily cycle
+python -m backend.scripts.run_multi_engine
 
-# Run intraday entry filter on reversal picks
-make intraday-scan
+# Check status
+python -m backend.scripts.run_multi_engine --status
 
-# Reset all state (fresh start)
-make reversal-reset
+# Run backtest
+python -m backend.scripts.backtest_regime --compare
 ```
 
 ## Project Structure
@@ -161,40 +110,27 @@ make reversal-reset
 trader/
 ├── backend/
 │   ├── strategies/
-│   │   ├── daily_momentum/    # ✅ Active: reversal + pseudo trading
-│   │   ├── breakout/          # ✗ Tested, not viable for intraday
-│   │   ├── mean_reversion/    # ✗ Tested, signal too weak
-│   │   ├── trend_30m/         # ✗ Tested, no follow-through
-│   │   └── cross_sectional/   # ✗ Tested, IC ≈ 0 intraday
-│   ├── broker/                # Zerodha + Paper trading
-│   ├── services/              # Backtester, execution engine
-│   ├── ml/                    # XGBoost, LightGBM models
-│   ├── api/                   # FastAPI backend (22 endpoints)
-│   ├── core/                  # Symbols, indicators, logging
-│   ├── scripts/               # CLI tools
-│   └── data/                  # Historical data + reports
-├── frontend/                  # Next.js dashboard
-├── Makefile                   # All commands
-└── .env                       # Zerodha credentials
-```
-
-## Available Commands
-
-```bash
-make install          # Setup backend + frontend
-make dev              # Start backend + frontend servers
-make auth             # Zerodha OAuth login
-make reversal         # Run daily reversal cycle
-make reversal-status  # Check portfolio status
-make reversal-reset   # Reset state
-make intraday-scan    # Scan for intraday entries
-make intraday         # Continuous intraday monitoring
-make backtest         # Run backtester
-make backtest-compare # Compare long-only vs long-short
-make robustness       # Rolling window validation
-make sweep            # TP/SL parameter sweep
-make train            # Train ML model
-make download         # Download historical data
+│   │   ├── multi_engine.py          # Orchestrator (dynamic allocation)
+│   │   ├── regime.py                # 3-state regime classifier
+│   │   ├── daily_momentum/          # Reversal engine + pseudo trading
+│   │   ├── midcap_momentum/         # Midcap backtest + regime analysis
+│   │   └── (breakout, mean_reversion, trend_30m, cross_sectional — tested, not used)
+│   ├── core/
+│   │   ├── scoring.py               # Shared reversal ranking
+│   │   ├── symbols.py               # NIFTY 50 + 100 universes
+│   │   └── indicators.py            # Technical indicators
+│   ├── db/                          # Postgres persistence (Neon)
+│   │   ├── models.py                # trades, snapshots, scores, regime_history
+│   │   ├── repository.py            # Data access layer
+│   │   └── persist.py               # Multi-engine → DB bridge
+│   ├── api/                         # FastAPI (22 endpoints)
+│   ├── broker/                      # Zerodha + Paper trading
+│   ├── services/                    # Backtester, execution, risk, features
+│   ├── ml/                          # XGBoost (demo only — system uses rule-based ranking)
+│   └── scripts/                     # CLI tools
+├── frontend/                        # Next.js dashboard
+├── Dockerfile                       # Multi-stage (non-root)
+└── docker-compose.yml
 ```
 
 ## Tech Stack
@@ -202,20 +138,38 @@ make download         # Download historical data
 | Component | Technology |
 |-----------|------------|
 | Backend | Python 3.13, FastAPI |
-| ML | XGBoost, LightGBM, scipy |
+| Frontend | Next.js 16, Tailwind, shadcn/ui |
+| Database | Neon Postgres (SQLAlchemy) |
 | Broker | Zerodha Kite Connect |
-| Frontend | Next.js, Tailwind, shadcn/ui |
-| Data | 5yr daily + 200d 5-min for 96 stocks |
+| ML | XGBoost (prediction page demo) |
+| Data | 5.4 years daily OHLCV for 96 stocks |
 
 ## Risk Management
 
-| Rule | Value |
-|------|-------|
-| Market regime gate | NIFTY < -0.5% → no trades |
-| Kill switch | Rolling WR < 50% → pause |
-| Position size | 5% of capital per stock |
-| Portfolio | Max 10 stocks at a time |
-| Holding | 5 trading days (rebalance weekly) |
+| Layer | Mechanism |
+|-------|-----------|
+| Regime gate | Reduces exposure in weak markets (never zero — floor at 8%) |
+| Drawdown dampening | Soft curve: `alloc *= (1 - k * drawdown)`, regime-weighted k |
+| Recovery boost | Increase exposure when DD recovering + IC improving |
+| Kill switch | Pause engine if rolling 20-trade WR < 50% |
+| IC kill switch | Halt all trading if rolling IC < -0.02 |
+| Entry filter | Skip stocks down > 5% today (panic continuation risk) |
+| Position limits | 10% capital per stock, 7 stocks per engine |
+
+## Paper Trading
+
+The system runs daily pseudo-trades with state persisted to Neon Postgres:
+
+```bash
+# Run daily (after 9:30 AM IST)
+python -m backend.scripts.run_multi_engine
+
+# All trades, snapshots, scores logged to:
+#   trades          — every entry/exit with context
+#   daily_snapshots — portfolio state each day
+#   stock_scores    — full ranking (RL-ready action space)
+#   regime_history  — every regime transition
+```
 
 ## License
 
