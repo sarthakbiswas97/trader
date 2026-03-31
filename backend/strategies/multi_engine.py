@@ -5,9 +5,9 @@ One alpha (mean reversion), two universes (large-cap + midcap),
 regime-based exposure control.
 
 Capital allocation by regime:
-  BULL:    50% large-cap + 20% midcap + 30% cash
-  NEUTRAL: 50% large-cap              + 50% cash
-  WEAK:    100% cash (no trading)
+  BULL:    35% large-cap + 40% midcap + 25% cash  (75% deployed)
+  NEUTRAL: 45% large-cap + 15% midcap + 40% cash  (60% deployed)
+  WEAK:    15% large-cap + 10% midcap + 75% cash  (25% deployed, IC strongest here)
 
 Kill switches:
   - Per-engine: rolling 20-trade win rate < 50%
@@ -64,22 +64,25 @@ class EngineState:
     active: bool = False
 
 
-# Fix #1: One factor, two universes — control total reversal exposure
+# Capital allocation by regime
+# Key insight: IC is STRONGEST in WEAK regime (+0.036 midcap, +0.024 largecap)
+# Sitting 100% cash in WEAK wastes our best signal.
+# Midcap is the return engine (IC=+0.025, +97% return, Sharpe 1.09)
 ALLOCATIONS = {
     Regime.BULL: {
-        "largecap": 0.50,
-        "midcap": 0.20,
-        "cash": 0.30,
+        "largecap": 0.35,
+        "midcap": 0.40,
+        "cash": 0.25,
     },
     Regime.NEUTRAL: {
-        "largecap": 0.50,
-        "midcap": 0.00,
-        "cash": 0.50,
+        "largecap": 0.45,
+        "midcap": 0.15,
+        "cash": 0.40,
     },
     Regime.WEAK: {
-        "largecap": 0.00,
-        "midcap": 0.00,
-        "cash": 1.00,
+        "largecap": 0.15,
+        "midcap": 0.10,
+        "cash": 0.75,
     },
 }
 

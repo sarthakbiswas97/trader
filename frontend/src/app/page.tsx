@@ -114,7 +114,7 @@ export default function LandingPage() {
           <div className="space-y-3">
             {[
               { step: "1", title: "Regime Classifier", desc: "Classify market as BULL, NEUTRAL, or WEAK using NIFTY 50-DMA + 5-day momentum + breadth. 2-day persistence filter prevents whipsaw.", color: "text-foreground" },
-              { step: "2", title: "Capital Allocation", desc: "BULL: 50% large-cap + 20% midcap + 30% cash. NEUTRAL: 50% large-cap + 50% cash. WEAK: 100% cash — sit out entirely.", color: "text-foreground" },
+              { step: "2", title: "Capital Allocation", desc: "BULL: 35% large-cap + 40% midcap + 25% cash. NEUTRAL: 45% large + 15% mid + 40% cash. WEAK: 15% large + 10% mid + 75% cash — reduced but active (IC is strongest here).", color: "text-foreground" },
               { step: "3", title: "Large-Cap Reversal Engine", desc: "Rank NIFTY 50 stocks by 5d + 10d + 21d past returns. Buy top 10 losers — IC = +0.020, +44% return, Sharpe 0.96.", color: "text-profit" },
               { step: "4", title: "Midcap Reversal Engine", desc: "Rank NIFTY 100 Extra (midcap) stocks by reversal. Buy top 5 losers — IC = +0.025, +69% return, Sharpe 0.99.", color: "text-profit" },
               { step: "5", title: "Hold & Rebalance", desc: "Hold 5 trading days per batch. Each engine manages positions independently with 5% per-stock limit.", color: "text-foreground" },

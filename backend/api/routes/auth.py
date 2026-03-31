@@ -129,21 +129,12 @@ async def connect_broker(state: AppStateDep, paper_mode: bool = True):
     """
     Connect to broker using saved session.
 
-    Args:
-        paper_mode: If True, use paper trading (default)
-
-    Prerequisites:
-        Run `python scripts/auth.py` first to authenticate with Zerodha
+    Falls back to standalone paper broker (no live market data)
+    when Kite session is expired. This ensures the dashboard
+    always works for visitors, even without authentication.
     """
-    # Load access token from session
     access_token = load_access_token()
     session = load_session()
-
-    if not access_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No valid session found. Run 'python scripts/auth.py' to authenticate.",
-        )
 
     try:
         if paper_mode:
@@ -152,27 +143,48 @@ async def connect_broker(state: AppStateDep, paper_mode: bool = True):
                 kite_api_key=settings.kite_api_key,
                 kite_api_secret=settings.kite_api_secret,
             )
-            broker.authenticate(access_token=access_token)
-            mode_str = "paper"
+
+            if access_token:
+                # Valid Kite session — paper broker with real market data
+                broker.authenticate(access_token=access_token)
+                user_name = session.get("user_name", "Unknown") if session else "Unknown"
+                mode_str = "paper+live_data"
+                message = f"Paper trading with live market data as {user_name}"
+            else:
+                # No valid session — standalone paper broker (saved data only)
+                broker.authenticate()
+                mode_str = "paper_only"
+                message = "Paper trading mode (Kite session expired — using saved data)"
+
+            state.broker = broker
+            logger.info("Broker connected", mode=mode_str)
+
+            return SuccessResponse(success=True, message=message)
+
         else:
+            if not access_token:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Live trading requires valid Kite session.",
+                )
+
             from backend.broker.zerodha import ZerodhaBroker
             broker = ZerodhaBroker(
                 api_key=settings.kite_api_key,
                 api_secret=settings.kite_api_secret,
             )
             broker.authenticate(access_token=access_token)
-            mode_str = "live"
+            state.broker = broker
 
-        state.broker = broker
+            user_name = session.get("user_name", "Unknown") if session else "Unknown"
+            logger.info("Broker connected", mode="live", user=user_name)
+            return SuccessResponse(
+                success=True,
+                message=f"Connected to Zerodha (live mode) as {user_name}",
+            )
 
-        user_name = session.get("user_name", "Unknown") if session else "Unknown"
-        logger.info(f"Broker connected", mode=mode_str, user=user_name)
-
-        return SuccessResponse(
-            success=True,
-            message=f"Connected to Zerodha ({mode_str} mode) as {user_name}",
-        )
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to connect broker: {e}")
         raise HTTPException(

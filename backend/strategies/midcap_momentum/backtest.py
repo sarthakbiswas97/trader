@@ -203,6 +203,14 @@ def run_regime_backtest(
         t_all = mean_all / (np.std(all_ic_vals) / np.sqrt(len(all_ic_vals)))
         print(f"  {'ALL':<10} {mean_all:>10.4f} {np.mean([x > 0 for x in all_ic_vals])*100:>9.0f}% {t_all:>10.2f} {len(all_ic_vals):>6}")
 
+    # Regime-based allocation (matches production multi-engine)
+    # Key: IC is strongest in WEAK regime — don't sit 100% cash
+    ALLOC_BY_REGIME = {
+        Regime.BULL: 0.75,     # 75% invested
+        Regime.NEUTRAL: 0.60,  # 60% invested
+        Regime.WEAK: 0.25,     # 25% invested (exploit strong IC, but cautious)
+    }
+
     # Simulate portfolio with regime-aware allocation
     portfolio_value = capital
     trade_log = []
@@ -216,25 +224,15 @@ def run_regime_backtest(
 
         next_rebal = rebalance_dates[i + 1]
         regime = regime_series.get(rebal_date, Regime.NEUTRAL)
+        alloc = ALLOC_BY_REGIME.get(regime, 0.50)
 
-        # In WEAK regime, skip all entries (cash)
-        if regime == Regime.WEAK:
+        scores_row = score.loc[rebal_date].dropna()
+        if len(scores_row) < top_n:
             equity_curve.append({"date": str(next_rebal), "equity": portfolio_value})
-            trade_log.append({
-                "date": rebal_date,
-                "regime": regime.value,
-                "action": "cash",
-                "net_ret": 0,
-                "portfolio": portfolio_value,
-            })
-            continue
-
-        scores = score.loc[rebal_date].dropna()
-        if len(scores) < top_n:
             continue
 
         # Pick top stocks
-        ranked = scores.sort_values(ascending=False)
+        ranked = scores_row.sort_values(ascending=False)
         picks = ranked.head(top_n).index.tolist()
 
         # Calculate returns
@@ -249,12 +247,6 @@ def run_regime_backtest(
 
             if stock_returns:
                 avg_ret = np.mean(stock_returns)
-
-                # Position sizing by regime
-                if regime == Regime.BULL:
-                    alloc = 0.8  # 80% invested
-                else:  # NEUTRAL
-                    alloc = 0.5  # 50% invested
 
                 portfolio_ret = avg_ret * alloc
                 cost = top_n * 2 * cost_per_trade_pct * alloc / top_n
@@ -286,9 +278,10 @@ def run_regime_backtest(
     sharpe = (period_returns.mean() / period_returns.std() * np.sqrt(252 / holding_days)) if len(period_returns) > 1 and period_returns.std() > 0 else 0
 
     winning = sum(1 for t in trade_log if t.get("net_ret", 0) > 0)
-    trading = sum(1 for t in trade_log if t.get("action") != "cash")
+    trading = len(trade_log)
     win_rate = winning / trading * 100 if trading > 0 else 0
-    cash_periods = sum(1 for t in trade_log if t.get("action") == "cash")
+    # Count periods where alloc < 50% as "reduced exposure"
+    reduced_periods = sum(1 for t in trade_log if t.get("alloc", 1) < 0.50)
 
     print(f"\n{'='*60}")
     print(f"PORTFOLIO RESULTS — {strategy.upper()} / {universe.upper()}")
@@ -299,16 +292,17 @@ def run_regime_backtest(
     print(f"  Sharpe:        {sharpe:.2f}")
     print(f"  Max DD:        {max_dd:.1f}%")
     print(f"  Win Rate:      {win_rate:.0f}% ({winning}/{trading})")
-    print(f"  Cash Periods:  {cash_periods}/{len(trade_log)}")
+    print(f"  Reduced Alloc: {reduced_periods}/{len(trade_log)} periods (alloc < 50%)")
 
     # Per-regime P&L
     print(f"\n  P&L by Regime:")
     for regime in [Regime.BULL, Regime.NEUTRAL, Regime.WEAK]:
-        regime_trades = [t for t in trade_log if t.get("regime") == regime.value and t.get("action") != "cash"]
+        regime_trades = [t for t in trade_log if t.get("regime") == regime.value]
         if regime_trades:
             regime_pnl = sum(t["net_ret"] for t in regime_trades) * 100
             regime_wr = sum(1 for t in regime_trades if t["net_ret"] > 0) / len(regime_trades) * 100
-            print(f"    {regime.value:<10} {regime_pnl:>8.2f}% return, {regime_wr:.0f}% WR ({len(regime_trades)} periods)")
+            avg_alloc = np.mean([t.get("alloc", 0) for t in regime_trades]) * 100
+            print(f"    {regime.value:<10} {regime_pnl:>8.2f}% return, {regime_wr:.0f}% WR, {avg_alloc:.0f}% avg alloc ({len(regime_trades)} periods)")
         else:
             print(f"    {regime.value:<10} no trades")
 
@@ -322,7 +316,7 @@ def run_regime_backtest(
         "sharpe": sharpe,
         "max_drawdown_pct": max_dd,
         "win_rate": win_rate,
-        "cash_periods": cash_periods,
+        "reduced_periods": reduced_periods,
         "total_periods": len(trade_log),
         "ic_by_regime": {
             r.value: {

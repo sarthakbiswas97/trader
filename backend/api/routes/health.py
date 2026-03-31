@@ -25,13 +25,22 @@ async def health_check():
     """
     state = get_app_state()
 
+    # Determine broker mode
+    session_valid = load_access_token() is not None
+    has_live_data = (
+        state.broker is not None
+        and hasattr(state.broker, "_kite")
+        and state.broker._kite is not None
+    )
+
     # Check components
     components = {
         "api": True,
         "broker_authenticated": state.is_authenticated,
+        "broker_mode": "live_data" if has_live_data else "paper_only" if state.is_authenticated else "disconnected",
         "bot_running": state.is_running,
         "model_available": MODEL_PATH.exists(),
-        "session_valid": load_access_token() is not None,
+        "session_valid": session_valid,
     }
 
     # Overall status

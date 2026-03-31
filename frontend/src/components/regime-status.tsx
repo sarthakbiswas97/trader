@@ -31,7 +31,7 @@ const REGIME_CONFIG = {
     color: "text-muted-foreground",
     bg: "bg-muted/30",
     border: "border-border/50",
-    desc: "Mixed signals — reversal only, reduced size",
+    desc: "Mixed signals — large-cap primary, midcap reduced",
   },
   WEAK: {
     label: "Weak / Bear",
@@ -39,7 +39,7 @@ const REGIME_CONFIG = {
     color: "text-loss",
     bg: "bg-loss/5",
     border: "border-loss/20",
-    desc: "Downtrend — sitting in cash, no trading",
+    desc: "Downtrend — reduced exposure but active (IC is strongest here)",
   },
 } as const;
 

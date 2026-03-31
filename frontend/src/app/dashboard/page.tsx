@@ -36,12 +36,43 @@ import type {
   HealthResponse,
 } from "@/lib/api";
 
-function PaperTradingBanner() {
+function BrokerModeBanner({ health }: { health: HealthResponse | null }) {
+  const mode = health?.components?.broker_mode as string | undefined;
+  const authenticated = health?.components?.broker_authenticated;
+
+  if (mode === "live_data") {
+    return (
+      <div className="rounded-lg border border-profit/20 bg-profit/5 px-4 py-2 flex items-center gap-2">
+        <span className="h-2 w-2 rounded-full bg-profit animate-pulse" />
+        <p className="text-xs font-medium text-profit">
+          Paper Trading Mode — Live market data from Zerodha. No real trades executed.
+        </p>
+      </div>
+    );
+  }
+
+  if (mode === "paper_only" || (authenticated && mode !== "live_data")) {
+    return (
+      <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-2.5 flex items-center gap-2">
+        <span className="h-2 w-2 rounded-full bg-warning animate-pulse" />
+        <div>
+          <p className="text-xs font-medium text-warning">
+            Paper Trading Mode — Kite session expired
+          </p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Showing last known positions and data. Live market data will resume when the admin authenticates with Zerodha.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Not connected at all — auto-connect will fire
   return (
-    <div className="rounded-lg border border-profit/20 bg-profit/5 px-4 py-2 flex items-center gap-2">
-      <span className="h-2 w-2 rounded-full bg-profit animate-pulse" />
-      <p className="text-xs font-medium text-profit">
-        Paper Trading Mode — No real trades executed. Simulated with ₹1,00,000 virtual capital.
+    <div className="rounded-lg border border-muted bg-muted/30 px-4 py-2 flex items-center gap-2">
+      <span className="h-2 w-2 rounded-full bg-muted-foreground/30 animate-pulse" />
+      <p className="text-xs text-muted-foreground">
+        Connecting to paper trading...
       </p>
     </div>
   );
@@ -231,8 +262,8 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Paper Trading Banner */}
-      <PaperTradingBanner />
+      {/* Broker Mode Banner */}
+      <BrokerModeBanner health={health} />
 
       {/* Market Status */}
       <MarketStatusBanner />
@@ -355,11 +386,11 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="px-4 pb-3 space-y-3">
             <div className="space-y-2">
-              <StatusRow label="API" value={health?.components?.api ? "Online" : "Offline"} ok={health?.components?.api} />
-              <StatusRow label="Broker" value={connected ? "Connected" : "Disconnected"} ok={connected} />
-              <StatusRow label="ML Model" value={health?.components?.model_available ? "Loaded" : "Not Found"} ok={health?.components?.model_available} />
-              <StatusRow label="Session" value={health?.components?.session_valid ? "Valid" : "Expired"} ok={health?.components?.session_valid} />
-              <StatusRow label="Bot" value={health?.components?.bot_running ? "Running" : "Stopped"} ok={health?.components?.bot_running} />
+              <StatusRow label="API" value={health?.components?.api ? "Online" : "Offline"} ok={!!health?.components?.api} />
+              <StatusRow label="Broker" value={connected ? "Connected" : "Disconnected"} ok={!!connected} />
+              <StatusRow label="ML Model" value={health?.components?.model_available ? "Loaded" : "Not Found"} ok={!!health?.components?.model_available} />
+              <StatusRow label="Session" value={health?.components?.session_valid ? "Valid" : "Expired"} ok={!!health?.components?.session_valid} />
+              <StatusRow label="Bot" value={health?.components?.bot_running ? "Running" : "Stopped"} ok={!!health?.components?.bot_running} />
             </div>
 
             {portfolio && (

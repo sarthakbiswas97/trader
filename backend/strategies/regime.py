@@ -137,11 +137,11 @@ class RegimeClassifier:
                         today=date.today(),
                         old_regime=old.value,
                         new_regime=raw_regime.value,
-                        nifty_close=nifty_close,
-                        nifty_ret_5d=nifty_ret_5d,
-                        nifty_ret_1d=nifty_ret_1d,
-                        breadth_pct=breadth_pct,
-                        score=score,
+                        nifty_close=float(nifty_close),
+                        nifty_ret_5d=float(nifty_ret_5d),
+                        nifty_ret_1d=float(nifty_ret_1d),
+                        breadth_pct=float(breadth_pct),
+                        score=int(score),
                         trigger="persistence",
                     )
                 except Exception:
