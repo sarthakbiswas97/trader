@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql://postgres:password@localhost:5432/trader"
 
+    # CORS
+    cors_origins: str = ""
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
@@ -43,6 +46,15 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore"
     )
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        """Merge default localhost origins with any extra origins from env."""
+        defaults = ["http://localhost:3000", "http://127.0.0.1:3000"]
+        if not self.cors_origins:
+            return defaults
+        extra = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        return list(dict.fromkeys(defaults + extra))
 
     @property
     def is_paper_mode(self) -> bool:
