@@ -163,12 +163,12 @@ async def start_bot(
         logger.error(f"Failed to start bot: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to start bot: {str(e)}",
+            detail="Failed to start bot. Check model and broker status.",
         )
 
 
 @router.post("/stop", response_model=BotStopResponse)
-async def stop_bot(state: AppStateDep, square_off: bool = False):
+async def stop_bot(state: AuthRequiredDep, square_off: bool = False):
     """
     Stop the trading bot.
 
@@ -201,6 +201,7 @@ async def stop_bot(state: AppStateDep, square_off: bool = False):
 
 @router.get("/cycles")
 async def get_recent_cycles(state: AppStateDep, limit: int = 10):
+    limit = min(limit, 100)  # Cap at 100
     """
     Get recent execution cycles.
     """
@@ -304,6 +305,45 @@ async def trigger_training(state: AuthRequiredDep, force: bool = False):
         "message": "Pipeline completed",
         "steps": results,
     }
+
+
+@router.get("/multi-engine")
+async def get_multi_engine_status(state: AppStateDep):
+    """
+    Get multi-engine orchestrator status.
+
+    Returns regime state, per-engine metrics, and capital allocation.
+    """
+    from backend.strategies.multi_engine import MultiEngine
+
+    kite = getattr(state.broker, "_kite", None) if state.broker else None
+    engine = MultiEngine(kite=kite)
+
+    return engine.get_status()
+
+
+@router.post("/multi-engine/run")
+async def run_multi_engine_cycle(state: AuthRequiredDep):
+    """
+    Run one daily cycle of the multi-engine system.
+    """
+    from backend.strategies.multi_engine import MultiEngine
+
+    kite = getattr(state.broker, "_kite", None) if state.broker else None
+    engine = MultiEngine(kite=kite)
+
+    result = engine.run_daily()
+    return result
+
+
+@router.post("/multi-engine/reset")
+async def reset_multi_engine(state: AuthRequiredDep):
+    """Reset multi-engine state."""
+    from backend.strategies.multi_engine import MultiEngine
+
+    engine = MultiEngine()
+    engine.reset()
+    return {"success": True, "message": "Multi-engine state reset"}
 
 
 @router.post("/square-off")

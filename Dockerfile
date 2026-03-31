@@ -36,8 +36,13 @@ COPY --from=frontend-builder /app/frontend/node_modules frontend/node_modules
 COPY --from=frontend-builder /app/frontend/package.json frontend/package.json
 COPY --from=frontend-builder /app/frontend/public frontend/public
 
+# Create non-root user
+RUN useradd -m -s /bin/bash appuser
+
 # Create data directories
-RUN mkdir -p backend/data/historical backend/data/index backend/data/pseudo_trading backend/data/training
+RUN mkdir -p backend/data/historical backend/data/index backend/data/pseudo_trading backend/data/training \
+    backend/data/multi_engine backend/ml/models \
+    && chown -R appuser:appuser /app
 
 # Expose ports
 EXPOSE 8000 3000
@@ -45,5 +50,8 @@ EXPOSE 8000 3000
 # Start script
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
+
+# Run as non-root
+USER appuser
 
 CMD ["/docker-entrypoint.sh"]

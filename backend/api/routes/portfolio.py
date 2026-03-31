@@ -119,6 +119,7 @@ async def get_positions(state: AuthRequiredDep):
 
 @router.get("/trades", response_model=TradesResponse)
 async def get_trades(state: AuthRequiredDep, limit: int = 50):
+    limit = min(limit, 500)  # Cap at 500
     """
     Get trade history.
     """

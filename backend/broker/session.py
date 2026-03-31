@@ -4,6 +4,7 @@ Handles loading/saving access tokens.
 """
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -55,6 +56,7 @@ def save_access_token(access_token: str, user_data: dict = None):
         })
 
     SESSION_FILE.write_text(json.dumps(session, indent=2))
+    os.chmod(SESSION_FILE, 0o600)  # Owner-only read/write
 
 
 def clear_session():

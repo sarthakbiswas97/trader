@@ -78,7 +78,7 @@ async def auth_callback(request_token: str, action: str = "login", status: str =
     """
     if status != "success" or not request_token:
         raise HTTPException(
-            status_code=status_code.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Authentication failed or cancelled.",
         )
 
@@ -99,13 +99,16 @@ async def auth_callback(request_token: str, action: str = "login", status: str =
         logger.info(f"OAuth callback: authenticated as {data.get('user_name')}")
 
         # Return HTML page that auto-closes or redirects to dashboard
+        import html
         from fastapi.responses import HTMLResponse
+
+        safe_name = html.escape(data.get("user_name", "Trader"))
         return HTMLResponse(content=f"""
         <html>
         <head><title>Authenticated</title></head>
         <body style="font-family:sans-serif;text-align:center;padding:50px;background:#0a0a0a;color:#e5e5e5;">
             <h1 style="color:#22c55e;">Authenticated</h1>
-            <p>Welcome, {data.get('user_name', 'Trader')}</p>
+            <p>Welcome, {safe_name}</p>
             <p>You can close this tab and return to the dashboard.</p>
             <script>setTimeout(()=>window.close(), 3000);</script>
         </body>
@@ -116,7 +119,7 @@ async def auth_callback(request_token: str, action: str = "login", status: str =
         logger.error(f"OAuth callback failed: {e}")
         from fastapi.responses import HTMLResponse
         return HTMLResponse(
-            content=f"<h1>Authentication Failed</h1><p>{e}</p>",
+            content="<h1>Authentication Failed</h1><p>Could not authenticate with Zerodha. Please try again.</p>",
             status_code=500,
         )
 
@@ -174,7 +177,7 @@ async def connect_broker(state: AppStateDep, paper_mode: bool = True):
         logger.error(f"Failed to connect broker: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to connect: {str(e)}",
+            detail="Failed to connect to broker. Check session and try again.",
         )
 
 

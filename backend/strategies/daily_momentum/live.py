@@ -18,7 +18,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
-from scipy.stats import spearmanr
 
 from backend.core.logger import get_logger
 from backend.core.symbols import NIFTY_100

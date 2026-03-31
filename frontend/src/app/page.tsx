@@ -105,20 +105,20 @@ export default function LandingPage() {
         </div>
       </div>
 
-      {/* How It Works */}
+      {/* How It Works — Multi-Engine */}
       <Card>
         <CardHeader className="pb-2 px-4 pt-3">
-          <CardTitle className="text-sm font-medium">How It Works</CardTitle>
+          <CardTitle className="text-sm font-medium">How It Works — Multi-Engine Architecture</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-4">
           <div className="space-y-3">
             {[
-              { step: "1", title: "Market Regime Gate", desc: "Check if NIFTY is falling > 0.5% or breadth is weak. If yes, stay in cash — no trades.", color: "text-loss" },
-              { step: "2", title: "Reversal Ranking", desc: "Rank all 96 NIFTY 100 stocks by 5d + 10d + 21d past returns. Biggest losers ranked highest.", color: "text-foreground" },
-              { step: "3", title: "Buy Top 10 Losers", desc: "Select the 10 stocks that fell the most. These are statistically likely to bounce over 5 days.", color: "text-profit" },
-              { step: "4", title: "Hold 5 Trading Days", desc: "Hold positions for one week. The short-term reversal effect plays out over this timeframe.", color: "text-foreground" },
-              { step: "5", title: "Rebalance Weekly", desc: "Sell all positions, compute fresh rankings, buy next batch of losers. Repeat.", color: "text-foreground" },
-              { step: "6", title: "Kill Switch", desc: "If rolling 20-trade win rate drops below 50%, pause all trading until the edge returns.", color: "text-warning" },
+              { step: "1", title: "Regime Classifier", desc: "Classify market as BULL, NEUTRAL, or WEAK using NIFTY 50-DMA + 5-day momentum + breadth. 2-day persistence filter prevents whipsaw.", color: "text-foreground" },
+              { step: "2", title: "Capital Allocation", desc: "BULL: 50% large-cap + 20% midcap + 30% cash. NEUTRAL: 50% large-cap + 50% cash. WEAK: 100% cash — sit out entirely.", color: "text-foreground" },
+              { step: "3", title: "Large-Cap Reversal Engine", desc: "Rank NIFTY 50 stocks by 5d + 10d + 21d past returns. Buy top 10 losers — IC = +0.020, +44% return, Sharpe 0.96.", color: "text-profit" },
+              { step: "4", title: "Midcap Reversal Engine", desc: "Rank NIFTY 100 Extra (midcap) stocks by reversal. Buy top 5 losers — IC = +0.025, +69% return, Sharpe 0.99.", color: "text-profit" },
+              { step: "5", title: "Hold & Rebalance", desc: "Hold 5 trading days per batch. Each engine manages positions independently with 5% per-stock limit.", color: "text-foreground" },
+              { step: "6", title: "Kill Switch", desc: "Per-engine kill switch: if 20-trade win rate < 50%, pause that engine. Market regime gate overrides everything in crashes.", color: "text-warning" },
             ].map((item) => (
               <div key={item.step} className="flex gap-3 items-start">
                 <div className="flex-shrink-0 h-6 w-6 rounded-full bg-muted flex items-center justify-center">

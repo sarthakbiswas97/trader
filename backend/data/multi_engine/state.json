@@ -1,0 +1,89 @@
+{
+  "total_capital": 100000,
+  "cash": 50000.0,
+  "current_regime": "NEUTRAL",
+  "ic_history": [],
+  "engines": {
+    "largecap": {
+      "capital": 50000.0,
+      "positions": [
+        {
+          "entry_date": "2026-03-31",
+          "stocks": [
+            {
+              "symbol": "ADANIENT",
+              "quantity": 2,
+              "entry_price": 1762.3175999999999,
+              "entry_cost": 3.5246351999999996,
+              "score": 0.9652777777777778,
+              "ret_5d": -0.08733329873903792,
+              "ret_today": 0.0
+            },
+            {
+              "symbol": "SHRIRAMFIN",
+              "quantity": 5,
+              "entry_price": 873.8442,
+              "entry_cost": 4.369221,
+              "score": 0.9375,
+              "ret_5d": -0.0708502024291498,
+              "ret_today": 0.0
+            },
+            {
+              "symbol": "INDUSINDBK",
+              "quantity": 6,
+              "entry_price": 753.9549000000001,
+              "entry_cost": 4.523729400000001,
+              "score": 0.9375,
+              "ret_5d": -0.08080869777669188,
+              "ret_today": 0.0
+            },
+            {
+              "symbol": "HDFCBANK",
+              "quantity": 6,
+              "entry_price": 733.0131,
+              "entry_cost": 4.3980786,
+              "score": 0.9027777777777778,
+              "ret_5d": -0.06265615990774565,
+              "ret_today": 0.0
+            },
+            {
+              "symbol": "SBIN",
+              "quantity": 5,
+              "entry_price": 981.3588,
+              "entry_cost": 4.906794,
+              "score": 0.875,
+              "ret_5d": -0.07429111531190928,
+              "ret_today": 0.0
+            },
+            {
+              "symbol": "BAJAJFINSV",
+              "quantity": 3,
+              "entry_price": 1635.0636,
+              "entry_cost": 4.905190800000001,
+              "score": 0.8402777777777778,
+              "ret_5d": -0.045898380401099226,
+              "ret_today": 0.0
+            },
+            {
+              "symbol": "SBILIFE",
+              "quantity": 2,
+              "entry_price": 1780.8546,
+              "entry_cost": 3.5617091999999997,
+              "score": 0.8125,
+              "ret_5d": -0.06305023986504303,
+              "ret_today": 0.0
+            }
+          ]
+        }
+      ],
+      "trade_history": [],
+      "active": true
+    },
+    "midcap": {
+      "capital": 0.0,
+      "positions": [],
+      "trade_history": [],
+      "active": false
+    }
+  }
+}

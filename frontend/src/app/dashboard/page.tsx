@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Wallet,
   TrendingUp,
@@ -29,6 +29,7 @@ import { useApi } from "@/hooks/use-api";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { MarketStatusBanner } from "@/components/market-status";
+import { RegimeStatus } from "@/components/regime-status";
 import type {
   PositionsResponse,
   BotStatus,
@@ -171,8 +172,10 @@ export default function DashboardPage() {
   const connected = health?.components?.broker_authenticated;
   const hasFetched = useRef(false);
   const autoConnectAttempted = useRef(false);
+  const [connecting, setConnecting] = useState(false);
 
   const handleConnect = async () => {
+    setConnecting(true);
     try {
       await api.connect(true);
       await refreshHealth();
@@ -180,6 +183,8 @@ export default function DashboardPage() {
       await refreshPositions();
     } catch {
       // Connection failed - banner stays visible
+    } finally {
+      setConnecting(false);
     }
   };
 
@@ -233,7 +238,7 @@ export default function DashboardPage() {
       <MarketStatusBanner />
 
       {/* Connection Banner (only shows briefly before auto-connect) */}
-      <ConnectionBanner health={health} onConnect={handleConnect} connecting={false} />
+      <ConnectionBanner health={health} onConnect={handleConnect} connecting={connecting} />
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -276,6 +281,9 @@ export default function DashboardPage() {
           icon={Activity}
         />
       </div>
+
+      {/* Multi-Engine Regime Status */}
+      <RegimeStatus />
 
       {/* Hot Watchlist */}
       {watchlist && watchlist.tier1_count > 0 && (

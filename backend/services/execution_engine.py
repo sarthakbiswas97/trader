@@ -130,7 +130,8 @@ class ExecutionEngine:
         # Engine state
         self.running = False
         self._cycle_count = 0
-        self._cycle_history: list[CycleResult] = []
+        from collections import deque
+        self._cycle_history: deque[CycleResult] = deque(maxlen=500)
 
         logger.info(
             "ExecutionEngine initialized",
