@@ -73,14 +73,15 @@ def _compute_backtest_allocation(
     rolling_ic: float | None,
     nifty_ret_5d: float | None,
     current_drawdown: float = 0.0,
+    prev_drawdown: float = 0.0,
+    prev_ic: float | None = None,
 ) -> float:
     """
     Continuous confidence-scored allocation for backtest.
 
-    Matches production logic: soft DD curve, regime-weighted k,
-    regime-specific floors.
+    Matches production: soft DD curve, regime-weighted k,
+    regime floors, recovery boost.
     """
-    # Regime config: base, floor, dd_k
     config = {
         Regime.BULL: (0.75, 0.25, 0.5),
         Regime.NEUTRAL: (0.60, 0.15, 0.7),
@@ -90,27 +91,28 @@ def _compute_backtest_allocation(
 
     # Confidence from IC + momentum
     scores, weights = [], []
-
     if rolling_ic is not None:
-        ic_score = max(0, min(1, (rolling_ic + 0.02) / 0.04))
-        scores.append(ic_score)
+        scores.append(max(0, min(1, (rolling_ic + 0.02) / 0.04)))
         weights.append(0.50)
-
     if nifty_ret_5d is not None:
-        mom_score = max(0, min(1, (nifty_ret_5d + 0.015) / 0.03))
-        scores.append(mom_score)
+        scores.append(max(0, min(1, (nifty_ret_5d + 0.015) / 0.03)))
         weights.append(0.50)
 
     confidence = sum(s * w for s, w in zip(scores, weights)) / sum(weights) if scores else 0.5
 
-    # Scale: confidence 0→base-15%, 0.5→base, 1→base+15%
     alloc = base + (confidence - 0.5) * 0.30
 
-    # Soft drawdown curve: alloc *= (1 - k * drawdown)
+    # Soft DD curve
     if current_drawdown > 0.03:
         alloc *= (1.0 - dd_k * current_drawdown)
 
-    # Regime-specific floor and cap
+    # Recovery boost: DD shrinking + IC improving → lean in
+    dd_recovering = prev_drawdown > 0.03 and current_drawdown < prev_drawdown * 0.8
+    ic_improving = rolling_ic is not None and prev_ic is not None and rolling_ic > prev_ic and rolling_ic > 0
+    if dd_recovering and ic_improving:
+        recovery_ratio = 1.0 - (current_drawdown / max(prev_drawdown, 0.01))
+        alloc += min(0.10, recovery_ratio * 0.10)
+
     return max(floor, min(0.85, alloc))
 
 
@@ -282,12 +284,18 @@ def run_regime_backtest(
         nifty_5d = nifty_ret_5d_series.get(rebal_date, None)
         nifty_5d = float(nifty_5d) if nifty_5d is not None and not np.isnan(nifty_5d) else None
 
-        # Current drawdown for dampening
+        # Drawdown tracking
         peak_value = max(e["equity"] for e in equity_curve) if equity_curve else capital
         current_dd = max(0, (peak_value - portfolio_value) / peak_value)
+        prev_dd = total_utilization[-1] if hasattr(total_utilization, '__len__') and len(trade_log) > 0 else 0
+        # Use actual prev DD from trade log
+        prev_dd = trade_log[-1].get("drawdown", 0) if trade_log else 0
+        prev_ic_val = running_ics[-2] if len(running_ics) >= 2 else None
 
-        # Dynamic allocation (continuous, confidence-scored)
-        alloc = _compute_backtest_allocation(regime, recent_ic, nifty_5d, current_dd)
+        # Dynamic allocation (continuous, confidence-scored, recovery-boosted)
+        alloc = _compute_backtest_allocation(
+            regime, recent_ic, nifty_5d, current_dd, prev_dd, prev_ic_val
+        )
         total_utilization.append(alloc)
 
         scores_row = score.loc[rebal_date].dropna()
@@ -325,6 +333,7 @@ def run_regime_backtest(
                     "alloc": alloc,
                     "net_ret": net_ret,
                     "portfolio": portfolio_value,
+                    "drawdown": current_dd,
                 })
 
                 # Track IC for dynamic WEAK sizing

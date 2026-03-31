@@ -135,6 +135,8 @@ def compute_dynamic_allocation(
     nifty_ret_5d: float | None = None,
     breadth_pct: float | None = None,
     current_drawdown_pct: float = 0.0,
+    prev_drawdown_pct: float = 0.0,
+    prev_ic: float | None = None,
 ) -> dict[str, float]:
     """
     Continuous confidence-scored capital allocation with regime-aware tuning.
@@ -143,9 +145,9 @@ def compute_dynamic_allocation(
       1. Confidence score (0-1) from IC + WR + momentum + breadth
       2. Scale total exposure around regime base
       3. Soft drawdown curve: allocation *= (1 - k * drawdown)
-         k is regime-weighted (BULL=0.5 gentle, WEAK=1.0 aggressive)
-      4. Regime-specific floor (BULL 25%, NEUTRAL 15%, WEAK 8%)
-      5. Adaptive midcap cap based on drawdown
+      4. Recovery boost: if DD recovering AND IC improving, +5-10% exposure
+      5. Regime-specific floor (BULL 25%, NEUTRAL 15%, WEAK 8%)
+      6. Adaptive midcap cap based on drawdown
     """
     target = REGIME_TARGETS[regime]
 
@@ -157,14 +159,28 @@ def compute_dynamic_allocation(
     total_exposure = target["total"] + adjustment
 
     # 3. Soft drawdown curve — regime-weighted
-    #    BULL: k=0.5 (gentle — don't cut winners early)
-    #    NEUTRAL: k=0.7
-    #    WEAK: k=1.0 (aggressive — protect hard in stress)
     if current_drawdown_pct > 0.03:
         dd_k = target["dd_k"]
         total_exposure *= (1.0 - dd_k * current_drawdown_pct)
 
-    # 4. Regime-specific floor and cap
+    # 4. Recovery boost: DD recovering AND IC improving → lean in faster
+    dd_recovering = (
+        prev_drawdown_pct > 0.03
+        and current_drawdown_pct < prev_drawdown_pct * 0.8  # DD shrunk by 20%+
+    )
+    ic_improving = (
+        rolling_ic is not None
+        and prev_ic is not None
+        and rolling_ic > prev_ic
+        and rolling_ic > 0
+    )
+    if dd_recovering and ic_improving:
+        # Boost 5-10% based on how much DD has recovered
+        recovery_ratio = 1.0 - (current_drawdown_pct / max(prev_drawdown_pct, 0.01))
+        boost = min(0.10, recovery_ratio * 0.10)  # Max 10% boost
+        total_exposure += boost
+
+    # 5. Regime-specific floor and cap
     floor = target["floor"]
     total_exposure = max(floor, min(MAX_EXPOSURE_CAP, total_exposure))
 
@@ -286,6 +302,10 @@ class MultiEngine:
         breadth = self._compute_breadth() if self.kite else None
         current_dd = self._compute_current_drawdown()
 
+        # Previous DD and IC for recovery detection
+        prev_dd = self.daily_log[-1].get("drawdown_pct", 0) if self.daily_log else 0
+        prev_ic = self.ic_history[-2]["ic"] if len(self.ic_history) >= 2 else None
+
         allocation = compute_dynamic_allocation(
             regime=regime,
             rolling_ic=self.ic_history[-1]["ic"] if self.ic_history else None,
@@ -293,6 +313,8 @@ class MultiEngine:
             nifty_ret_5d=nifty_ret_5d,
             breadth_pct=breadth,
             current_drawdown_pct=current_dd,
+            prev_drawdown_pct=prev_dd,
+            prev_ic=prev_ic,
         )
         result["allocation"] = {k: v * 100 for k, v in allocation.items()}
         result["confidence"] = compute_confidence(
