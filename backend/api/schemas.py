@@ -44,7 +44,7 @@ class HealthResponse(BaseModel):
     status: str = "healthy"
     timestamp: datetime
     version: str = "1.0.0"
-    components: dict[str, bool] = Field(default_factory=dict)
+    components: dict[str, bool | str] = Field(default_factory=dict)
 
 
 # =============================================================================

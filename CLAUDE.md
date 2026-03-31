@@ -1,5 +1,9 @@
 # Autonomous Trading Agent - Project Context
 
+## Commit Convention
+After completing any task or feature, provide a clear one-line commit message following commitlint convention:
+`<type>: <description>` where type is one of: `feat`, `fix`, `refactor`, `perf`, `style`, `docs`, `test`, `chore`, `ci`, `security`.
+
 ## Project Overview
 - **Goal**: Autonomous intraday trading agent for Indian equity markets
 - **Broker**: Zerodha Kite Connect API
