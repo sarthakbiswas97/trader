@@ -10,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Trading Bot",
+  title: "Trader",
   description: "ML-powered autonomous trading for Indian equity markets",
 };
 

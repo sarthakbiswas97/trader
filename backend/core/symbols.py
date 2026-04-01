@@ -53,8 +53,7 @@ NIFTY_50 = [
     "BAJAJ-AUTO",
     "SHRIRAMFIN",
     "TRENT",
-    "TATAMOTORS",
-    "LTIM",
+    # TATAMOTORS and LTIM removed — no instrument token on Zerodha
 ]
 
 # NIFTY 100 = NIFTY 50 + Next 50 most liquid large/mid-caps
@@ -97,7 +96,7 @@ NIFTY_100_EXTRA = [
     "OBEROIRLTY",
     "OFSS",
     "PAGEIND",
-    "PEL",
+    # PEL removed — no instrument token on Zerodha
     "PERSISTENT",
     "PIDILITIND",
     "PNB",
@@ -108,7 +107,7 @@ NIFTY_100_EXTRA = [
     "TORNTPHARM",
     "UNITDSPR",
     "VBL",
-    "ZOMATO",
+    # ZOMATO removed — no instrument token on Zerodha
 ]
 
 # Combined universe
