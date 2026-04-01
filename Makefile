@@ -84,13 +84,16 @@ VPS_CONTAINER = trader
 VPS_APP_PORT = 8000
 VPS_DOMAIN = api.trader.sarthakb.xyz
 
-deploy-auth: auth ## Authenticate locally, copy session to VPS, connect broker
+deploy-auth: auth ## Authenticate locally, copy session to VPS, connect broker, start bot
 	scp .kite_session $(VPS_HOST):~/kite_session
 	ssh $(VPS_HOST) "docker cp ~/kite_session $(VPS_CONTAINER):/app/.kite_session && rm ~/kite_session"
 	ssh $(VPS_HOST) "docker restart $(VPS_CONTAINER)"
 	@echo "Waiting for container to start..."
 	@sleep 4
 	ssh $(VPS_HOST) "curl -sf -X POST http://localhost:$(VPS_APP_PORT)/api/v1/auth/connect"
+	@echo ""
+	@echo "=== Starting Bot ==="
+	ssh $(VPS_HOST) "curl -sf -X POST http://localhost:$(VPS_APP_PORT)/api/v1/bot/start -H 'Content-Type: application/json' -d '{}'"
 	@echo ""
 	@echo "=== Health Check ==="
 	ssh $(VPS_HOST) "curl -sf http://localhost:$(VPS_APP_PORT)/api/v1/health | python3 -m json.tool"
