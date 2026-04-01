@@ -129,15 +129,32 @@ async def connect_broker(state: AppStateDep, paper_mode: bool = True):
     """
     Connect to broker using saved session.
 
-    Falls back to standalone paper broker (no live market data)
-    when Kite session is expired. This ensures the dashboard
-    always works for visitors, even without authentication.
+    If a paper broker already exists with open positions, re-authenticates
+    the Kite client instead of creating a new broker (preserves positions).
     """
     access_token = load_access_token()
     session = load_session()
 
     try:
         if paper_mode:
+            # Re-use existing broker if it has open positions
+            existing = state.broker
+            if (
+                existing
+                and isinstance(existing, PaperBroker)
+                and existing._positions
+            ):
+                # Just refresh the Kite connection on the existing broker
+                if access_token:
+                    existing.authenticate(access_token=access_token)
+                    user_name = session.get("user_name", "Unknown") if session else "Unknown"
+                    message = f"Reconnected Kite (preserved {len(existing._positions)} positions) as {user_name}"
+                else:
+                    message = f"Paper mode (preserved {len(existing._positions)} positions, Kite expired)"
+                logger.info("Broker reconnected, positions preserved", positions=len(existing._positions))
+                return SuccessResponse(success=True, message=message)
+
+            # No existing broker or no positions — create fresh
             broker = PaperBroker(
                 initial_capital=settings.paper_trading_capital,
                 kite_api_key=settings.kite_api_key,
@@ -145,13 +162,11 @@ async def connect_broker(state: AppStateDep, paper_mode: bool = True):
             )
 
             if access_token:
-                # Valid Kite session — paper broker with real market data
                 broker.authenticate(access_token=access_token)
                 user_name = session.get("user_name", "Unknown") if session else "Unknown"
                 mode_str = "paper+live_data"
                 message = f"Paper trading with live market data as {user_name}"
             else:
-                # No valid session — standalone paper broker (saved data only)
                 broker.authenticate()
                 mode_str = "paper_only"
                 message = "Paper trading mode (Kite session expired — using saved data)"

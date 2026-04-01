@@ -179,6 +179,54 @@ class StockScore(Base):
     )
 
 
+class PredictionRecord(Base):
+    """Persisted ML predictions — survives restarts, enables historical analysis."""
+
+    __tablename__ = "prediction_records"
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False)
+    direction = Column(String(10), nullable=False)  # UP, DOWN, NEUTRAL
+    probability = Column(Float)
+    confidence = Column(Float)
+    prob_up = Column(Float)
+    prob_down = Column(Float)
+    prob_neutral = Column(Float)
+    should_trade = Column(Boolean)
+    cycle_id = Column(Integer)  # which execution cycle
+    timestamp = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_pred_timestamp", "timestamp"),
+        Index("idx_pred_symbol", "symbol"),
+    )
+
+
+class IntraTrade(Base):
+    """Intraday bot trades — persisted across container restarts."""
+
+    __tablename__ = "intra_trades"
+
+    id = Column(Integer, primary_key=True)
+    trade_id = Column(String(30), unique=True, nullable=False)
+    order_id = Column(String(30))
+    symbol = Column(String(20), nullable=False)
+    side = Column(String(10), nullable=False)  # BUY, SELL, SHORT, COVER
+    quantity = Column(Integer, nullable=False)
+    price = Column(Float, nullable=False)
+    success = Column(Boolean, default=True)
+    message = Column(String(200))
+    session_date = Column(Date, nullable=False)
+    timestamp = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_intra_session_date", "session_date"),
+        Index("idx_intra_symbol", "symbol"),
+    )
+
+
 class RegimeHistory(Base):
     """Every regime transition — audit trail for regime classifier."""
 

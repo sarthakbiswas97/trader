@@ -117,43 +117,28 @@ async def get_positions(state: AuthRequiredDep):
     )
 
 
+def _safe_trade_side(side_value: str) -> TradeSide:
+    """Safely convert a side string to TradeSide enum."""
+    try:
+        return TradeSide(side_value)
+    except ValueError:
+        return TradeSide.BUY  # fallback
+
+
 @router.get("/trades", response_model=TradesResponse)
 async def get_trades(state: AuthRequiredDep, limit: int = 50):
-    limit = min(limit, 500)  # Cap at 500
-    """
-    Get trade history.
-    """
-    broker = state.broker
-
-    # Get trades from paper broker or trade executor
+    """Get trade history (in-memory + database fallback)."""
+    limit = min(limit, 500)
     trades_data = []
 
-    if hasattr(broker, "get_trades"):
-        paper_trades = broker.get_trades()
-        for i, t in enumerate(paper_trades[-limit:]):
-            trades_data.append(TradeSchema(
-                id=t.trade_id,
-                symbol=t.symbol,
-                side=TradeSide(t.side.value),
-                quantity=t.quantity,
-                entry_price=t.price,
-                exit_price=None,
-                entry_time=t.timestamp,
-                exit_time=None,
-                pnl=None,
-                pnl_percent=None,
-                status=TradeStatus.CLOSED,
-                exit_reason=None,
-            ))
-
-    # Also get from trade executor if available
+    # 1. Get from trade executor (in-memory, current session)
     if state.engine and state.engine.trade_executor:
         history = state.engine.trade_executor.get_trade_history()
         for i, t in enumerate(history[-limit:]):
             trades_data.append(TradeSchema(
                 id=t.get("order_id", f"trade_{i}"),
                 symbol=t["symbol"],
-                side=TradeSide(t["side"]),
+                side=_safe_trade_side(t["side"]),
                 quantity=t["quantity"],
                 entry_price=t["price"],
                 exit_price=None,
@@ -163,6 +148,32 @@ async def get_trades(state: AuthRequiredDep, limit: int = 50):
                 status=TradeStatus.CLOSED if t["success"] else TradeStatus.OPEN,
                 exit_reason=t.get("message"),
             ))
+
+    # 2. If no in-memory trades, read from database
+    if not trades_data:
+        try:
+            from backend.db.database import get_session
+            from backend.db.repository import IntraTradeRepository
+
+            with get_session() as session:
+                repo = IntraTradeRepository(session)
+                db_trades = repo.get_recent_trades(limit=limit)
+                for t in db_trades:
+                    trades_data.append(TradeSchema(
+                        id=t.trade_id,
+                        symbol=t.symbol,
+                        side=_safe_trade_side(t.side),
+                        quantity=t.quantity,
+                        entry_price=t.price,
+                        exit_price=None,
+                        entry_time=t.timestamp,
+                        exit_time=None,
+                        pnl=None,
+                        status=TradeStatus.CLOSED if t.success else TradeStatus.OPEN,
+                        exit_reason=t.message,
+                    ))
+        except Exception as e:
+            logger.warning(f"Failed to read trades from DB: {e}")
 
     # Calculate stats
     winning = sum(1 for t in trades_data if t.pnl and t.pnl > 0)

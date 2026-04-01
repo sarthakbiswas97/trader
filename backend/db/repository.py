@@ -12,7 +12,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from backend.core.logger import get_logger
-from backend.db.models import DailySnapshot, RegimeHistory, StockScore, Trade
+from backend.db.models import (
+    DailySnapshot,
+    IntraTrade,
+    PredictionRecord,
+    RegimeHistory,
+    StockScore,
+    Trade,
+)
 
 logger = get_logger(__name__)
 
@@ -155,6 +162,73 @@ class ScoreRepository:
         for score in scores:
             if score.symbol in returns:
                 score.fwd_return_5d = returns[score.symbol]
+
+
+class PredictionRepository:
+    """Read/write prediction records."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def bulk_insert(self, predictions: list[dict]):
+        """Insert a batch of predictions from one cycle."""
+        for pred_data in predictions:
+            self.session.add(PredictionRecord(**pred_data))
+        self.session.flush()
+
+    def get_latest_cycle(self, limit: int = 50) -> list[PredictionRecord]:
+        """Get predictions from the most recent cycle."""
+        latest = (
+            self.session.query(func.max(PredictionRecord.cycle_id)).scalar()
+        )
+        if latest is None:
+            return []
+        return (
+            self.session.query(PredictionRecord)
+            .filter(PredictionRecord.cycle_id == latest)
+            .order_by(desc(PredictionRecord.confidence))
+            .limit(limit)
+            .all()
+        )
+
+    def get_recent(self, limit: int = 50) -> list[PredictionRecord]:
+        """Get most recent predictions."""
+        return (
+            self.session.query(PredictionRecord)
+            .order_by(desc(PredictionRecord.timestamp))
+            .limit(limit)
+            .all()
+        )
+
+
+class IntraTradeRepository:
+    """Read/write intraday bot trades."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def insert_trade(self, **kwargs) -> IntraTrade:
+        trade = IntraTrade(**kwargs)
+        self.session.add(trade)
+        self.session.flush()
+        return trade
+
+    def get_trades_for_date(self, session_date: date, limit: int = 200) -> list[IntraTrade]:
+        return (
+            self.session.query(IntraTrade)
+            .filter(IntraTrade.session_date == session_date)
+            .order_by(desc(IntraTrade.timestamp))
+            .limit(limit)
+            .all()
+        )
+
+    def get_recent_trades(self, limit: int = 50) -> list[IntraTrade]:
+        return (
+            self.session.query(IntraTrade)
+            .order_by(desc(IntraTrade.timestamp))
+            .limit(limit)
+            .all()
+        )
 
 
 class RegimeRepository:

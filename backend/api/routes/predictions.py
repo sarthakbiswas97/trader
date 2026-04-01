@@ -228,31 +228,61 @@ async def stream_predictions(state: AuthRequiredDep):
 @router.get("/latest", response_model=PredictionsResponse)
 async def get_latest_predictions(state: AppStateDep):
     """
-    Get latest predictions from the running bot.
-
-    Returns cached predictions from the last execution cycle.
+    Get latest predictions — from in-memory cache or database.
     """
-    if not state.engine:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bot not running. Start the bot or use /predictions/generate",
-        )
+    predictions = []
 
-    # Get from last cycle
-    if not state.engine._cycle_history:
+    # 1. Try in-memory from running engine
+    if state.engine and state.engine._latest_predictions:
+        for pred in state.engine._latest_predictions.values():
+            predictions.append(PredictionSchema(
+                symbol=pred.symbol,
+                direction=pred.direction,
+                probability=pred.probability,
+                confidence=pred.confidence,
+                should_trade=pred.should_trade,
+                timestamp=pred.timestamp,
+                top_features=pred.top_features[:3],
+            ))
+
+    # 2. Fallback to database
+    if not predictions:
+        try:
+            from backend.db.database import get_session
+            from backend.db.repository import PredictionRepository
+
+            with get_session() as session:
+                repo = PredictionRepository(session)
+                db_preds = repo.get_latest_cycle(limit=50)
+                for p in db_preds:
+                    predictions.append(PredictionSchema(
+                        symbol=p.symbol,
+                        direction=p.direction,
+                        probability=p.probability or 0,
+                        confidence=p.confidence or 0,
+                        should_trade=p.should_trade or False,
+                        timestamp=p.timestamp,
+                        top_features=[],
+                    ))
+        except Exception as e:
+            logger.warning(f"Failed to read predictions from DB: {e}")
+
+    if not predictions:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No predictions available yet. Wait for first cycle.",
+            detail="No predictions available. Start the bot or use /predictions/generate",
         )
 
-    last_cycle = state.engine._cycle_history[-1]
+    predictions.sort(key=lambda p: p.confidence, reverse=True)
+    up_signals = sum(1 for p in predictions if p.direction == "UP")
+    down_signals = sum(1 for p in predictions if p.direction == "DOWN")
 
     return PredictionsResponse(
-        predictions=[],  # Would need to store predictions in cycle
-        generated_at=last_cycle.timestamp,
-        symbols_analyzed=last_cycle.predictions_generated,
-        up_signals=last_cycle.signals_found,
-        down_signals=last_cycle.predictions_generated - last_cycle.signals_found,
+        predictions=predictions,
+        generated_at=datetime.now(),
+        symbols_analyzed=len(predictions),
+        up_signals=up_signals,
+        down_signals=down_signals,
     )
 
 

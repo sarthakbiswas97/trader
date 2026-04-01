@@ -21,6 +21,12 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     logger.info("Starting application...")
+    # Create DB tables (idempotent)
+    try:
+        from backend.db.database import create_tables
+        create_tables()
+    except Exception as e:
+        logger.warning(f"DB table creation skipped: {e}")
     yield
     logger.info("Shutting down application...")
 

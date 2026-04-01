@@ -3,6 +3,7 @@ Paper Trading Broker implementation.
 Simulates trading with virtual money using real market data from Zerodha.
 """
 
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -74,6 +75,10 @@ class PaperBroker(Broker):
         self._kite = None
         self._access_token = None
 
+        # LTP cache: symbol -> (price, timestamp)
+        self._ltp_cache: dict[str, tuple[float, float]] = {}
+        self._ltp_cache_ttl: float = 3.0  # seconds
+
         self.realized_pnl = 0.0
         self.total_trades = 0
         self.winning_trades = 0
@@ -144,17 +149,59 @@ class PaperBroker(Broker):
     def access_token(self) -> str:
         return self._access_token
 
-    def _get_real_ltp(self, symbol: str) -> float:
-        """Get real LTP from Zerodha if connected."""
-        if self._kite:
-            try:
-                data = self._kite.ltp([f"NSE:{symbol}"])
-                return data.get(f"NSE:{symbol}", {}).get("last_price", 0)
-            except Exception as e:
-                logger.warning(f"Failed to get real LTP for {symbol}: {e}")
+    def _batch_ltp(self, symbols: list[str]) -> dict[str, float]:
+        """Batch fetch LTP with caching and retry. Single API call for all symbols."""
+        if not symbols:
+            return {}
 
-        logger.warning(f"Using mock price for {symbol}")
-        return 1000.0
+        now = time.time()
+        result = {}
+        stale_symbols = []
+
+        # Check cache first
+        for s in symbols:
+            cached = self._ltp_cache.get(s)
+            if cached and (now - cached[1]) < self._ltp_cache_ttl:
+                result[s] = cached[0]
+            else:
+                stale_symbols.append(s)
+
+        # Fetch stale symbols from Kite in one batch
+        if stale_symbols and self._kite:
+            instruments = [f"NSE:{s}" for s in stale_symbols]
+            for attempt in range(2):
+                try:
+                    data = self._kite.ltp(instruments)
+                    fetch_time = time.time()
+                    for key, value in data.items():
+                        sym = key.replace("NSE:", "")
+                        price = value.get("last_price", 0)
+                        if price > 0:
+                            self._ltp_cache[sym] = (price, fetch_time)
+                            result[sym] = price
+                    break
+                except Exception as e:
+                    if attempt == 0:
+                        logger.warning(f"LTP fetch retry after error: {e}")
+                        time.sleep(1)
+                    else:
+                        logger.warning(f"LTP fetch failed after retry: {e}")
+
+        # Fill missing symbols from stale cache or mock
+        for s in symbols:
+            if s not in result:
+                cached = self._ltp_cache.get(s)
+                if cached:
+                    result[s] = cached[0]  # stale cache better than mock
+                else:
+                    result[s] = 1000.0
+                    logger.warning(f"Using mock price for {s}")
+
+        return result
+
+    def _get_real_ltp(self, symbol: str) -> float:
+        """Get real LTP for a single symbol (uses batch internally)."""
+        return self._batch_ltp([symbol]).get(symbol, 1000.0)
 
     def _generate_order_id(self) -> str:
         return f"PAPER_{uuid4().hex[:16].upper()}"
@@ -347,14 +394,18 @@ class PaperBroker(Broker):
         return list(self._orders.values())
 
     def get_positions(self) -> list[Position]:
+        if not self._positions:
+            return []
+        # Single batch LTP call for all positions
+        symbols = list(self._positions.keys())
+        prices = self._batch_ltp(symbols)
         positions = []
         for symbol, pos in self._positions.items():
-            current_price = self._get_real_ltp(symbol)
             positions.append(Position(
                 symbol=symbol,
                 quantity=pos.quantity,
                 avg_price=pos.avg_price,
-                current_price=current_price,
+                current_price=prices.get(symbol, pos.avg_price),
                 product=pos.product,
             ))
         return positions
@@ -363,15 +414,17 @@ class PaperBroker(Broker):
         return []
 
     def get_margin(self) -> MarginInfo:
-        unrealized_pnl = sum(p.pnl for p in self.get_positions())
+        positions = self.get_positions()  # single batch call
+        unrealized_pnl = sum(p.pnl for p in positions)
+        used_margin = sum(p.invested_value for p in positions)
         return MarginInfo(
             available_cash=self.capital,
-            used_margin=sum(p.invested_value for p in self.get_positions()),
+            used_margin=used_margin,
             total_balance=self.capital + unrealized_pnl,
         )
 
     def get_ltp(self, symbols: list[str]) -> dict[str, float]:
-        return {symbol: self._get_real_ltp(symbol) for symbol in symbols}
+        return self._batch_ltp(symbols)
 
     def get_quote(self, symbol: str) -> Quote:
         ltp = self._get_real_ltp(symbol)

@@ -201,6 +201,37 @@ class ExecutionEngine:
                     entry.weak_scan_count = 0
                     logger.info("Demoted to Tier 2", symbol=symbol)
 
+    def _persist_predictions(self, predictions: dict[str, "Prediction"]) -> None:
+        """Fire-and-forget: persist predictions to DB for historical analysis."""
+        if not predictions:
+            return
+        try:
+            from backend.db.database import get_session
+            from backend.db.repository import PredictionRepository
+
+            cycle_id = self._cycle_count
+            ts = now_ist()
+            records = [
+                {
+                    "symbol": pred.symbol,
+                    "direction": pred.direction,
+                    "probability": pred.probability,
+                    "confidence": pred.confidence,
+                    "prob_up": pred.prob_up,
+                    "prob_down": pred.prob_down,
+                    "prob_neutral": pred.prob_neutral,
+                    "should_trade": pred.should_trade,
+                    "cycle_id": cycle_id,
+                    "timestamp": ts,
+                }
+                for pred in predictions.values()
+            ]
+            with get_session() as session:
+                repo = PredictionRepository(session)
+                repo.bulk_insert(records)
+        except Exception as e:
+            logger.warning(f"Failed to persist predictions: {e}")
+
     def get_hot_watchlist(self) -> list[dict[str, Any]]:
         """Get current Tier 1 (hot) watchlist for frontend display."""
         result = []
@@ -306,8 +337,9 @@ class ExecutionEngine:
                 except Exception as e:
                     errors.append(f"Prediction failed for {symbol}: {e}")
 
-            # 3. Update tier assignments
+            # 3. Update tier assignments + persist predictions
             self._update_tiers(predictions)
+            self._persist_predictions(predictions)
 
             # 4. Check exits for open positions
             exit_results = self.trade_executor.check_and_execute_exits(predictions)

@@ -26,6 +26,9 @@ class TradeSide(str, Enum):
     """Trade side."""
     BUY = "BUY"
     SELL = "SELL"
+    LONG = "LONG"
+    SHORT = "SHORT"
+    COVER = "COVER"
 
 
 class TradeStatus(str, Enum):

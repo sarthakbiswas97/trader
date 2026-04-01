@@ -1,4 +1,5 @@
-.PHONY: install dev backend frontend auth download features train bot test stop clean
+.PHONY: install dev backend frontend auth download features train bot test stop clean \
+	deploy-auth deploy-redeploy deploy-logs deploy-health deploy-status deploy-ssh
 
 # =============================================================================
 # Setup
@@ -73,6 +74,41 @@ sweep: ## Run TP/SL parameter sweep
 
 robustness: ## Run rolling window robustness test
 	. backend/.venv/bin/activate && python3 backend/scripts/robustness.py
+
+# =============================================================================
+# VPS Deployment (run from local machine)
+# =============================================================================
+
+VPS_HOST = sarthaktrader
+VPS_CONTAINER = trader
+VPS_APP_PORT = 8000
+VPS_DOMAIN = api.trader.sarthakb.xyz
+
+deploy-auth: auth ## Authenticate locally, copy session to VPS, connect broker
+	scp .kite_session $(VPS_HOST):~/kite_session
+	ssh $(VPS_HOST) "docker cp ~/kite_session $(VPS_CONTAINER):/app/.kite_session && rm ~/kite_session"
+	ssh $(VPS_HOST) "docker restart $(VPS_CONTAINER)"
+	@echo "Waiting for container to start..."
+	@sleep 4
+	ssh $(VPS_HOST) "curl -sf -X POST http://localhost:$(VPS_APP_PORT)/api/v1/auth/connect"
+	@echo ""
+	@echo "=== Health Check ==="
+	ssh $(VPS_HOST) "curl -sf http://localhost:$(VPS_APP_PORT)/api/v1/health | python3 -m json.tool"
+
+deploy-redeploy: ## Pull latest image and restart container on VPS
+	ssh $(VPS_HOST) "~/apps/trader/redeploy.sh"
+
+deploy-health: ## Check VPS backend health
+	@curl -sf https://$(VPS_DOMAIN)/api/v1/health | python3 -m json.tool
+
+deploy-status: ## Check VPS container status
+	ssh $(VPS_HOST) "docker ps --filter name=$(VPS_CONTAINER)"
+
+deploy-logs: ## Tail VPS container logs
+	ssh $(VPS_HOST) "docker logs -f $(VPS_CONTAINER)"
+
+deploy-ssh: ## SSH into VPS
+	ssh $(VPS_HOST)
 
 # =============================================================================
 # Build & Clean

@@ -52,6 +52,30 @@ class TradeResult:
         }
 
 
+def _persist_trade(result: "TradeResult"):
+    """Fire-and-forget DB persistence for a trade result."""
+    try:
+        from backend.db.database import get_session
+        from backend.db.repository import IntraTradeRepository
+
+        with get_session() as session:
+            repo = IntraTradeRepository(session)
+            repo.insert_trade(
+                trade_id=result.order_id or f"T_{id(result)}",
+                order_id=result.order_id,
+                symbol=result.symbol,
+                side=result.side,
+                quantity=result.quantity,
+                price=result.price,
+                success=result.success,
+                message=result.message[:200] if result.message else None,
+                session_date=result.timestamp.date(),
+                timestamp=result.timestamp,
+            )
+    except Exception as e:
+        logger.warning(f"Failed to persist trade to DB: {e}")
+
+
 class TradeExecutor:
     """
     Execute trading decisions based on ML signals.
@@ -284,6 +308,8 @@ class TradeExecutor:
             logger.error(f"Buy order failed for {symbol}: {e}")
 
         self._trade_history.append(result)
+        if result.success:
+            _persist_trade(result)
         return result
 
     def _execute_short_entry(
@@ -349,6 +375,8 @@ class TradeExecutor:
             logger.error(f"Short entry failed for {symbol}: {e}")
 
         self._trade_history.append(result)
+        if result.success:
+            _persist_trade(result)
         return result
 
     def check_and_execute_exits(
@@ -479,6 +507,8 @@ class TradeExecutor:
             logger.error(f"Sell order failed for {symbol}: {e}")
 
         self._trade_history.append(result)
+        if result.success:
+            _persist_trade(result)
         return result
 
     def _execute_short_cover(
@@ -542,6 +572,8 @@ class TradeExecutor:
             logger.error(f"Short cover failed for {symbol}: {e}")
 
         self._trade_history.append(result)
+        if result.success:
+            _persist_trade(result)
         return result
 
     def square_off_all(self) -> list[TradeResult]:
