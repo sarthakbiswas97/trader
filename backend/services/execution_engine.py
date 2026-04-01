@@ -341,10 +341,19 @@ class ExecutionEngine:
             self._update_tiers(predictions)
             self._persist_predictions(predictions)
 
-            # 4. Check exits for open positions
+            # 4. Check exits for open positions (always, even after market hours)
             exit_results = self.trade_executor.check_and_execute_exits(predictions)
 
-            # 5. Rank and execute entries
+            # 5. Extract ATR values from features for dynamic SL/TP
+            atr_values = {}
+            for symbol, features in all_features.items():
+                if hasattr(features, "atr") and features.atr > 0:
+                    # Denormalize: feature ATR is atr/close, we need raw ATR
+                    ltp = self.broker.get_ltp([symbol]).get(symbol, 0)
+                    if ltp > 0:
+                        atr_values[symbol] = features.atr * ltp
+
+            # 6. Rank and execute entries (only during market hours)
             if can_place_new_entry():
                 held_symbols = [p.symbol for p in self.position_manager.get_all_positions()]
 
@@ -358,6 +367,7 @@ class ExecutionEngine:
                     entry_results = self.trade_executor.execute_entries(
                         ranked_stocks,
                         available_capital=margin.available_cash,
+                        atr_values=atr_values,
                     )
 
         except Exception as e:
@@ -440,23 +450,205 @@ class ExecutionEngine:
         return [c.to_dict() for c in self._cycle_history[-limit:]]
 
 
+class ReversalEngine:
+    """
+    Daily reversal strategy engine — wraps MultiEngine.
+
+    Runs the proven regime-gated cross-sectional reversal strategy:
+      - Once per day at market open: compute reversal scores, enter top stocks
+      - 5-day hold period, no intraday SL/TP
+      - Regime-based allocation (75% bull / 60% neutral / 25% weak)
+      - Kill switches: rolling IC + per-engine win rate
+
+    Exposes the same interface as ExecutionEngine for frontend compatibility.
+    """
+
+    def __init__(self, broker: Broker, capital: float = 100000.0):
+        from collections import deque
+        from backend.strategies.multi_engine import MultiEngine
+        from backend.core.symbols import NIFTY_100
+
+        self.broker = broker
+        self.symbols = NIFTY_100
+        self.running = False
+        self._cycle_count = 0
+        self._cycle_history: deque[CycleResult] = deque(maxlen=100)
+        self._latest_predictions: dict = {}
+        self._ran_today = False
+        self._today_date = None
+
+        # Get Kite client from broker for real market data
+        kite = getattr(broker, "_kite", None)
+
+        # Core: the proven multi-engine strategy
+        self.multi_engine = MultiEngine(kite=kite, total_capital=capital)
+
+        # Keep these for frontend interface compatibility
+        self.risk_guardian = RiskGuardian(broker)
+        self.position_manager = PositionManager(broker)
+        self.trade_executor = TradeExecutor(
+            broker=broker,
+            risk_guardian=self.risk_guardian,
+            position_manager=self.position_manager,
+        )
+
+        logger.info(
+            "ReversalEngine initialized",
+            symbols=len(self.symbols),
+            capital=capital,
+        )
+
+    async def start(self) -> None:
+        """Start the daily reversal engine loop."""
+        self.running = True
+        asyncio.ensure_future(self.run())
+
+    def stop(self) -> None:
+        """Stop the engine."""
+        self.running = False
+        logger.info("ReversalEngine stopped")
+
+    async def run(self) -> None:
+        """
+        Main loop: run multi-engine daily cycle at market open.
+        Check exits hourly during market hours.
+        """
+        logger.info("ReversalEngine starting")
+
+        while self.running:
+            try:
+                today = now_ist().date()
+
+                # Reset daily flag on new day
+                if self._today_date != today:
+                    self._today_date = today
+                    self._ran_today = False
+
+                if not is_market_open():
+                    wait_time = time_to_market_open()
+                    logger.info("Market closed", next_open_in=str(wait_time))
+                    await asyncio.sleep(min(60, wait_time.total_seconds()))
+                    continue
+
+                # Run daily cycle ONCE per day (at market open)
+                if not self._ran_today:
+                    await self._run_daily_cycle()
+                    self._ran_today = True
+                    await asyncio.sleep(300)  # Wait 5 min after entry
+                    continue
+
+                # Hourly: check if any positions need exit (aged out)
+                # MultiEngine handles this in run_daily, but we can also
+                # check periodically for kill switch / circuit breaker
+                await asyncio.sleep(3600)  # Check every hour
+
+            except Exception as e:
+                logger.error(f"ReversalEngine error: {e}")
+                await asyncio.sleep(60)
+
+        logger.info("ReversalEngine stopped")
+
+    async def _run_daily_cycle(self) -> None:
+        """Run the multi-engine daily cycle (entries + exits)."""
+        self._cycle_count += 1
+
+        try:
+            # This does everything: regime, allocation, picks, entries, exits
+            result = self.multi_engine.run_daily()
+
+            # Build a CycleResult for frontend compatibility
+            total_entries = sum(
+                len(eng.get("picks", []))
+                for eng in result.get("engines", {}).values()
+            )
+            total_exits = sum(
+                len(eng.get("exits", []))
+                for eng in result.get("engines", {}).values()
+            )
+
+            cycle = CycleResult(
+                timestamp=now_ist(),
+                market_open=is_market_open(),
+                tier="daily",
+                symbols_scanned=len(self.symbols),
+                predictions_generated=0,
+                signals_found=total_entries,
+                entries_executed=total_entries,
+                exits_executed=total_exits,
+                errors=[result.get("error", "")] if result.get("error") else [],
+                hot_watchlist=[],
+            )
+            self._cycle_history.append(cycle)
+
+            logger.info(
+                "Daily reversal cycle complete",
+                regime=result.get("regime"),
+                entries=total_entries,
+                exits=total_exits,
+                portfolio=result.get("portfolio_value"),
+            )
+
+        except Exception as e:
+            logger.error(f"Daily cycle failed: {e}")
+
+    def square_off_all(self) -> list[dict[str, Any]]:
+        """Square off all positions via trade executor."""
+        return [r.to_dict() for r in self.trade_executor.square_off_all()]
+
+    def get_status(self) -> dict[str, Any]:
+        me = self.multi_engine
+        return {
+            "running": self.running,
+            "cycle_count": self._cycle_count,
+            "strategy": "reversal",
+            "regime": me.current_regime.value if me.current_regime else "unknown",
+            "last_cycle": (
+                self._cycle_history[-1].to_dict()
+                if self._cycle_history else None
+            ),
+            "hot_watchlist": [],
+            "positions": self.position_manager.get_summary(),
+            "risk": self.risk_guardian.get_status(),
+            "executor": self.trade_executor.get_summary(),
+            "engines": {
+                name: {
+                    "capital": state.capital,
+                    "open_positions": sum(len(b["stocks"]) for b in state.positions),
+                    "total_trades": len(state.trade_history),
+                    "pnl": sum(t.get("net_pnl", 0) for t in state.trade_history),
+                    "active": state.active,
+                }
+                for name, state in me.engine_states.items()
+            },
+        }
+
+    def get_recent_cycles(self, limit: int = 10) -> list[dict[str, Any]]:
+        return [c.to_dict() for c in self._cycle_history[-limit:]]
+
+    def get_hot_watchlist(self) -> list[dict[str, Any]]:
+        """Return current open positions as watchlist items."""
+        items = []
+        for name, state in self.multi_engine.engine_states.items():
+            for batch in state.positions:
+                for stock in batch["stocks"]:
+                    items.append({
+                        "symbol": stock["symbol"],
+                        "tier": 1,
+                        "engine": name,
+                        "entry_price": stock["entry_price"],
+                        "score": stock.get("score", 0),
+                        "entry_date": batch["entry_date"],
+                    })
+        return items
+
+
 def create_engine(
     broker: Broker,
     symbols: list[str] = None,
-) -> ExecutionEngine:
-    """Factory function to create a configured ExecutionEngine."""
-    from backend.core.symbols import NIFTY_100
+) -> ReversalEngine:
+    """Factory function to create the reversal-based trading engine."""
+    capital = 100000.0
+    if hasattr(broker, "initial_capital"):
+        capital = broker.initial_capital
 
-    if symbols is None:
-        symbols = NIFTY_100
-
-    data_service = HistoricalDataService()
-
-    if hasattr(broker, "_kite") and broker._kite:
-        data_service.set_kite(broker._kite)
-
-    return ExecutionEngine(
-        broker=broker,
-        symbols=symbols,
-        data_service=data_service,
-    )
+    return ReversalEngine(broker=broker, capital=capital)

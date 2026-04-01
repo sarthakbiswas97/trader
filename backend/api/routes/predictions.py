@@ -328,6 +328,142 @@ async def get_available_symbols(state: AuthRequiredDep):
     }
 
 
+@router.get("/reversal")
+async def get_reversal_scores(state: AppStateDep):
+    """
+    Get reversal scores for all NIFTY 100 stocks with regime context.
+
+    This is what the trading engine actually uses for decisions.
+    Returns each stock's oversold score, returns, and the action
+    the system would take (buy/skip/held and why).
+    """
+    from backend.core.scoring import compute_reversal_scores
+    from backend.core.symbols import NIFTY_50, NIFTY_100_EXTRA
+    from backend.services.historical_data import HistoricalDataService
+    from backend.strategies.multi_engine import MultiEngine
+
+    # Use running engine if available, otherwise create fresh
+    if state.engine and hasattr(state.engine, "multi_engine"):
+        me = state.engine.multi_engine
+    else:
+        kite = getattr(state.broker, "_kite", None) if state.broker else None
+        me = MultiEngine(kite=kite)
+
+    # Get regime info
+    regime_status = me.regime_classifier.get_status()
+    regime = regime_status["regime"]
+
+    # Allocation targets
+    from backend.strategies.multi_engine import REGIME_TARGETS
+    from backend.strategies.regime import Regime
+    regime_enum = Regime(regime)
+    targets = REGIME_TARGETS.get(regime_enum, {})
+    total_exposure = targets.get("total", 0)
+
+    # Get prices (from broker or saved data)
+    prices = me._fetch_prices()
+
+    # Get today's returns for entry filter
+    today_returns = me._fetch_today_returns(prices) if prices else {}
+
+    # Compute reversal scores for both universes
+    ds = HistoricalDataService()
+    if me.kite:
+        ds.set_kite(me.kite)
+
+    largecap_scores = compute_reversal_scores(NIFTY_50, prices, ds)
+    midcap_scores = compute_reversal_scores(NIFTY_100_EXTRA, prices, ds)
+
+    # Get held symbols
+    held_symbols = set()
+    for engine_state in me.engine_states.values():
+        for batch in engine_state.positions:
+            for stock in batch["stocks"]:
+                held_symbols.add(stock["symbol"])
+
+    # Check kill switches
+    rolling_ic = me._compute_rolling_ic(prices) if prices else None
+    ic_killed = rolling_ic is not None and rolling_ic < -0.02
+
+    # Build response for each stock
+    stocks = []
+
+    for universe, score_df, config_name, top_n in [
+        ("largecap", largecap_scores, "largecap", 7),
+        ("midcap", midcap_scores, "midcap", 5),
+    ]:
+        if score_df.empty:
+            continue
+
+        for rank_idx, (symbol, row) in enumerate(score_df.iterrows()):
+            is_top = rank_idx < top_n
+            is_held = symbol in held_symbols
+            today_ret = today_returns.get(symbol, 0)
+            panic_drop = today_ret < -0.05
+
+            # Determine action
+            if is_held:
+                action = "HELD"
+                reason = "Currently in portfolio"
+            elif ic_killed:
+                action = "BLOCKED"
+                reason = f"Kill switch: IC={rolling_ic:.4f}"
+            elif total_exposure <= 0.08:
+                action = "BLOCKED"
+                reason = f"Regime {regime} — minimal allocation ({total_exposure*100:.0f}%)"
+            elif panic_drop:
+                action = "SKIP"
+                reason = f"Down {today_ret*100:.1f}% today (panic filter)"
+            elif is_top:
+                action = "BUY"
+                reason = f"Top {top_n} oversold in {universe}"
+            else:
+                action = "WATCH"
+                reason = f"Rank #{rank_idx+1} — below top {top_n} cutoff"
+
+            stocks.append({
+                "symbol": symbol,
+                "universe": universe,
+                "score": round(float(row["score"]), 4),
+                "ret_5d": round(float(row["ret_5d"]) * 100, 2),
+                "ret_10d": round(float(row["ret_10d"]) * 100, 2),
+                "ret_21d": round(float(row["ret_21d"]) * 100, 2),
+                "price": round(float(row["price"]), 2),
+                "rank": rank_idx + 1,
+                "action": action,
+                "reason": reason,
+                "today_return": round(today_ret * 100, 2) if today_ret else 0,
+            })
+
+    # Sort by score descending
+    stocks.sort(key=lambda s: s["score"], reverse=True)
+
+    buy_count = sum(1 for s in stocks if s["action"] == "BUY")
+    held_count = sum(1 for s in stocks if s["action"] == "HELD")
+    blocked_count = sum(1 for s in stocks if s["action"] == "BLOCKED")
+
+    return {
+        "stocks": stocks,
+        "regime": {
+            "current": regime,
+            "pending": regime_status.get("pending"),
+            "pending_days": regime_status.get("pending_days", 0),
+            "total_exposure": round(total_exposure * 100, 1),
+        },
+        "kill_switch": {
+            "ic_killed": ic_killed,
+            "rolling_ic": round(rolling_ic, 4) if rolling_ic is not None else None,
+        },
+        "summary": {
+            "total_stocks": len(stocks),
+            "buy_signals": buy_count,
+            "held_positions": held_count,
+            "blocked": blocked_count,
+            "generated_at": datetime.now().isoformat(),
+        },
+    }
+
+
 @router.get("/history")
 async def get_prediction_history(limit: int = 10):
     """Get list of past prediction sessions (date-wise cards)."""

@@ -86,7 +86,47 @@ class PositionManager:
     def __init__(self, broker: Broker):
         self.broker = broker
         self._managed_positions: dict[str, ManagedPosition] = {}
+        self._load_persisted_positions()
         logger.info("PositionManager initialized")
+
+    def _load_persisted_positions(self):
+        """Load open positions from DB (survive container restarts)."""
+        try:
+            from backend.db.database import get_session
+            from backend.db.repository import OpenPositionRepository
+
+            with get_session() as session:
+                repo = OpenPositionRepository(session)
+                saved = repo.get_all()
+                for pos in saved:
+                    # Create a minimal Prediction for the managed position
+                    from backend.ml.inference import Prediction
+                    pred = Prediction(
+                        symbol=pos.symbol,
+                        timestamp=pos.entry_time,
+                        direction=pos.prediction_direction or "NEUTRAL",
+                        probability=pos.prediction_confidence or 0.5,
+                        confidence=pos.prediction_confidence or 0,
+                        prob_up=0.5, prob_down=0.5, prob_neutral=0,
+                        top_features=[],
+                    )
+                    self._managed_positions[pos.symbol] = ManagedPosition(
+                        symbol=pos.symbol,
+                        quantity=pos.quantity,
+                        entry_price=pos.entry_price,
+                        entry_time=pos.entry_time,
+                        prediction=pred,
+                        is_short=pos.is_short,
+                        entry_reason=pos.entry_reason or "restored",
+                        target_price=pos.target_price,
+                        stop_loss_price=pos.stop_loss_price,
+                        current_price=pos.entry_price,
+                        peak_price=pos.entry_price,
+                    )
+                if saved:
+                    logger.info(f"Restored {len(saved)} positions from DB")
+        except Exception as e:
+            logger.warning(f"Failed to load persisted positions: {e}")
 
     def sync_with_broker(self) -> None:
         """
@@ -135,11 +175,14 @@ class PositionManager:
         prediction: Prediction,
         is_short: bool = False,
         entry_reason: str = "ML signal",
-        stop_loss_pct: float = 0.02,
-        target_pct: float = 0.02,
+        stop_loss_pct: float = 0.05,
+        target_pct: float = 0.04,
+        atr: float | None = None,
+        sl_atr_mult: float = 2.0,
+        tp_atr_mult: float = 1.5,
     ) -> ManagedPosition:
         """
-        Record a new position.
+        Record a new position with ATR-based dynamic SL/TP.
 
         Args:
             symbol: Trading symbol
@@ -148,16 +191,34 @@ class PositionManager:
             prediction: ML prediction that triggered entry
             is_short: True for short position
             entry_reason: Human-readable reason
-            stop_loss_pct: Stop loss as fraction
-            target_pct: Target profit as fraction
+            stop_loss_pct: Fallback stop loss as fraction (if ATR unavailable)
+            target_pct: Fallback target profit as fraction
+            atr: Average True Range value for dynamic SL/TP
+            sl_atr_mult: Stop-loss ATR multiplier (SL = entry ± ATR × mult)
+            tp_atr_mult: Take-profit ATR multiplier (TP = entry ± ATR × mult)
         """
-        if is_short:
-            # Short: stop-loss is ABOVE entry, target is BELOW
-            stop_loss_price = entry_price * (1 + stop_loss_pct)
-            target_price = entry_price * (1 - target_pct)
+        if atr and atr > 0:
+            # Dynamic ATR-based SL/TP
+            if is_short:
+                stop_loss_price = entry_price + (atr * sl_atr_mult)
+                target_price = entry_price - (atr * tp_atr_mult)
+            else:
+                stop_loss_price = entry_price - (atr * sl_atr_mult)
+                target_price = entry_price + (atr * tp_atr_mult)
+            logger.info(
+                f"ATR-based SL/TP for {symbol}",
+                atr=round(atr, 2),
+                sl=round(stop_loss_price, 2),
+                tp=round(target_price, 2),
+            )
         else:
-            stop_loss_price = entry_price * (1 - stop_loss_pct)
-            target_price = entry_price * (1 + target_pct)
+            # Fallback to fixed %
+            if is_short:
+                stop_loss_price = entry_price * (1 + stop_loss_pct)
+                target_price = entry_price * (1 - target_pct)
+            else:
+                stop_loss_price = entry_price * (1 - stop_loss_pct)
+                target_price = entry_price * (1 + target_pct)
 
         side = "SHORT" if is_short else "LONG"
 
@@ -187,7 +248,45 @@ class PositionManager:
             target=target_price,
         )
 
+        # Persist to DB for multi-day survival
+        self._persist_position(position)
+
         return position
+
+    def _persist_position(self, pos: ManagedPosition):
+        """Fire-and-forget: save open position to DB."""
+        try:
+            from backend.db.database import get_session
+            from backend.db.repository import OpenPositionRepository
+
+            with get_session() as session:
+                repo = OpenPositionRepository(session)
+                repo.save_position(
+                    symbol=pos.symbol,
+                    quantity=pos.quantity,
+                    entry_price=pos.entry_price,
+                    is_short=pos.is_short,
+                    entry_reason=pos.entry_reason,
+                    stop_loss_price=pos.stop_loss_price,
+                    target_price=pos.target_price,
+                    prediction_direction=pos.prediction.direction,
+                    prediction_confidence=pos.prediction.confidence,
+                    entry_time=pos.entry_time,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to persist position {pos.symbol}: {e}")
+
+    def _remove_persisted_position(self, symbol: str):
+        """Fire-and-forget: remove closed position from DB."""
+        try:
+            from backend.db.database import get_session
+            from backend.db.repository import OpenPositionRepository
+
+            with get_session() as session:
+                repo = OpenPositionRepository(session)
+                repo.remove_position(symbol)
+        except Exception as e:
+            logger.warning(f"Failed to remove persisted position {symbol}: {e}")
 
     def close_position(self, symbol: str, exit_price: float, exit_reason: str) -> dict[str, Any] | None:
         """
@@ -231,6 +330,7 @@ class PositionManager:
         }
 
         del self._managed_positions[symbol]
+        self._remove_persisted_position(symbol)
 
         logger.info(
             "Position closed",

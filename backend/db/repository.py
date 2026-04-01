@@ -15,6 +15,7 @@ from backend.core.logger import get_logger
 from backend.db.models import (
     DailySnapshot,
     IntraTrade,
+    OpenPosition,
     PredictionRecord,
     RegimeHistory,
     StockScore,
@@ -271,6 +272,34 @@ class IntraTradeRepository:
             .limit(limit)
             .all()
         )
+
+
+class OpenPositionRepository:
+    """Persist open positions across container restarts."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def save_position(self, **kwargs):
+        """Upsert an open position."""
+        stmt = pg_insert(OpenPosition).values(**kwargs)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["symbol"],
+            set_={k: v for k, v in kwargs.items() if k != "symbol"},
+        )
+        self.session.execute(stmt)
+
+    def remove_position(self, symbol: str):
+        """Remove a closed position."""
+        self.session.query(OpenPosition).filter(OpenPosition.symbol == symbol).delete()
+
+    def get_all(self) -> list[OpenPosition]:
+        """Get all open positions."""
+        return self.session.query(OpenPosition).all()
+
+    def clear_all(self):
+        """Clear all open positions (e.g., fresh start)."""
+        self.session.query(OpenPosition).delete()
 
 
 class RegimeRepository:

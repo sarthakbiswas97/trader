@@ -24,34 +24,48 @@ logger = get_logger(__name__)
 
 @dataclass
 class RiskConfig:
-    """Risk management configuration with separate long/short limits."""
+    """Risk management configuration — swing trading (multi-day holds).
+
+    Stop-loss is ATR-based (dynamic per stock), not fixed %.
+    Positions can be held for up to 7 trading days.
+    No intraday force-exit — positions carry overnight (CNC).
+    """
 
     # Long position limits
     max_long_position_pct: float = 0.05     # 5% of capital per long position
-    max_long_exposure: float = 0.20         # 20% total long exposure
+    max_long_exposure: float = 0.40         # 40% total long exposure (wider for swing)
 
     # Short position limits (tighter)
     max_short_position_pct: float = 0.03    # 3% of capital per short position
-    max_short_exposure: float = 0.15        # 15% total short exposure
+    max_short_exposure: float = 0.20        # 20% total short exposure
 
     # Combined limits
-    max_total_exposure: float = 0.25        # 25% combined long + short
+    max_total_exposure: float = 0.50        # 50% combined (swing needs room)
 
-    # Stop-loss / take-profit
-    long_stop_loss_pct: float = 0.02        # -2% stop loss for longs
-    long_take_profit_pct: float = 0.02      # +2% take profit for longs
-    short_stop_loss_pct: float = 0.015      # -1.5% stop loss for shorts (tighter)
-    short_take_profit_pct: float = 0.02     # +2% take profit for shorts
+    # ATR-based stop-loss (multipliers, not fixed %)
+    long_sl_atr_mult: float = 2.0           # SL = entry - ATR × 2
+    short_sl_atr_mult: float = 2.0          # SL = entry + ATR × 2
+    # Fallback fixed % if ATR unavailable
+    long_stop_loss_pct: float = 0.05        # -5% hard SL fallback
+    short_stop_loss_pct: float = 0.04       # -4% hard SL fallback
 
-    # Hold time limits
-    long_max_hold_minutes: float = 120      # 2 hours for longs
-    short_max_hold_minutes: float = 90      # 1.5 hours for shorts
+    # Take-profit: mean reversion target (EMA bounce)
+    long_tp_atr_mult: float = 1.5           # TP = entry + ATR × 1.5
+    short_tp_atr_mult: float = 1.5          # TP = entry - ATR × 1.5
+    long_take_profit_pct: float = 0.04      # 4% hard TP fallback
+    short_take_profit_pct: float = 0.04     # 4% hard TP fallback
+
+    # Hold time limits (trading days, not minutes)
+    max_hold_days: int = 7                  # 7 trading days max
+    # Keep minutes for backward compat but set very high
+    long_max_hold_minutes: float = 99999
+    short_max_hold_minutes: float = 99999
 
     # General limits
     max_daily_loss_pct: float = 0.03        # 3% daily loss → circuit breaker
     max_drawdown_pct: float = 0.10          # 10% drawdown → halt
     trade_cooldown_secs: int = 60           # 60s between trades
-    max_trades_per_day: int = 20            # Max trades per day
+    max_trades_per_day: int = 10            # Lower for swing (fewer trades)
     min_confidence: float = 0.20            # Min 20% confidence to trade
 
     # Feature toggle
@@ -225,48 +239,62 @@ class RiskGuardian:
         position: Position,
         is_short: bool = False,
         holding_minutes: float = 0,
+        managed_position: "ManagedPosition | None" = None,
     ) -> tuple[bool, str]:
         """
-        Check if a position should be exited.
+        Check if a position should be exited (swing mode).
+
+        Uses ATR-based dynamic SL/TP set at entry time (stored on ManagedPosition).
+        Falls back to fixed % if ATR prices aren't available.
+        Does NOT force-exit at market close — positions carry overnight.
 
         Args:
-            position: Current position
+            position: Current broker position (has current_price, pnl_percent)
             is_short: Whether this is a short position
             holding_minutes: How long position has been held
+            managed_position: ManagedPosition with SL/TP prices from entry
         """
-        if is_short:
-            stop_loss = self.config.short_stop_loss_pct * 100
-            take_profit = self.config.short_take_profit_pct * 100
-            max_hold = self.config.short_max_hold_minutes
-        else:
-            stop_loss = self.config.long_stop_loss_pct * 100
-            take_profit = self.config.long_take_profit_pct * 100
-            max_hold = self.config.long_max_hold_minutes
+        current_price = position.current_price
 
+        # 1. ATR-based stop-loss (dynamic, set at entry)
+        if managed_position and managed_position.stop_loss_price:
+            if is_short:
+                if current_price >= managed_position.stop_loss_price:
+                    return True, "stop_loss_atr"
+            else:
+                if current_price <= managed_position.stop_loss_price:
+                    return True, "stop_loss_atr"
+
+        # 2. Fallback fixed % stop-loss
         pnl_pct = position.pnl_percent
+        stop_loss_pct = (self.config.short_stop_loss_pct if is_short else self.config.long_stop_loss_pct) * 100
+        if pnl_pct <= -stop_loss_pct:
+            return True, "stop_loss_hard"
 
-        # For shorts, P&L is inverted (price down = profit)
-        # The broker already handles this in Position.pnl
+        # 3. ATR-based take-profit target
+        if managed_position and managed_position.target_price:
+            if is_short:
+                if current_price <= managed_position.target_price:
+                    return True, "take_profit_atr"
+            else:
+                if current_price >= managed_position.target_price:
+                    return True, "take_profit_atr"
 
-        # Stop-loss
-        if pnl_pct <= -stop_loss:
-            return True, "stop_loss"
+        # 4. Fallback fixed % take-profit
+        tp_pct = (self.config.short_take_profit_pct if is_short else self.config.long_take_profit_pct) * 100
+        if pnl_pct >= tp_pct:
+            return True, "take_profit_hard"
 
-        # Take profit
-        if pnl_pct >= take_profit:
-            return True, "take_profit"
+        # 5. Max hold days (convert minutes to trading days: ~375 min per day)
+        holding_days = holding_minutes / 375
+        if holding_days >= self.config.max_hold_days:
+            return True, "max_hold_days"
 
-        # Max hold time
-        if holding_minutes > max_hold:
-            return True, "max_hold_time"
-
-        # End of day
-        if not can_place_new_entry():
-            return True, "market_close"
-
-        # Circuit breaker
+        # 6. Circuit breaker — emergency exit
         if self.circuit_breaker_triggered:
             return True, "circuit_breaker"
+
+        # NOTE: No market_close force-exit. Swing positions carry overnight.
 
         return False, ""
 

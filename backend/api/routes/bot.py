@@ -62,22 +62,15 @@ async def get_bot_status(state: AppStateDep):
 @router.post("/prepare")
 async def prepare_bot(state: AuthRequiredDep):
     """
-    Prepare the bot by running the ML pipeline if needed.
-    Runs in background — poll /bot/prepare/status for progress.
+    Prepare the bot by downloading historical data.
 
-    Pipeline steps:
-    1. Download historical data (if missing)
-    2. Generate features (if missing)
-    3. Train model (if missing or stale > 7 days)
+    The reversal engine needs daily candle data for scoring.
+    ML features and model training are optional (predictions page only).
+
+    Runs in background — poll /bot/prepare/status for progress.
     """
     if pipeline_progress.running:
         return {"success": True, "message": "Pipeline already running"}
-
-    # Check if pipeline is even needed
-    if model_exists() and not model_is_stale():
-        pipeline_progress.start()
-        pipeline_progress.finish()  # Immediately done
-        return {"success": True, "message": "Model is fresh, no preparation needed"}
 
     kite = getattr(state.broker, "_kite", None)
 
@@ -94,7 +87,7 @@ async def prepare_bot(state: AuthRequiredDep):
     thread = threading.Thread(target=run_pipeline, daemon=True)
     thread.start()
 
-    return {"success": True, "message": "Pipeline started"}
+    return {"success": True, "message": "Pipeline started — downloading data"}
 
 
 @router.get("/prepare/status")
@@ -123,19 +116,10 @@ async def start_bot(
             detail="Bot is already running",
         )
 
-    if not model_exists():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ML model not found. Call /bot/prepare first.",
-        )
-
-    symbols = request.symbols or NIFTY_100
-
     try:
-        # Create execution engine
+        # Create reversal-based trading engine
         engine = create_engine(
             broker=state.broker,
-            symbols=symbols,
         )
 
         state.engine = engine
@@ -151,11 +135,11 @@ async def start_bot(
 
         loop.create_task(run_engine())
 
-        logger.info(f"Bot started", symbols=len(symbols))
+        logger.info("Reversal bot started", symbols=len(engine.symbols))
 
         return BotStartResponse(
             success=True,
-            message=f"Bot started with {len(symbols)} symbols",
+            message=f"Reversal bot started — {len(engine.symbols)} symbols, regime-gated",
             status=BotStatus.RUNNING,
         )
 
@@ -163,7 +147,7 @@ async def start_bot(
         logger.error(f"Failed to start bot: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to start bot. Check model and broker status.",
+            detail=f"Failed to start bot: {str(e)}",
         )
 
 
@@ -313,12 +297,14 @@ async def get_multi_engine_status(state: AppStateDep):
     Get multi-engine orchestrator status.
 
     Returns regime state, per-engine metrics, and capital allocation.
+    Uses the running engine if bot is started, otherwise creates a fresh one.
     """
-    from backend.strategies.multi_engine import MultiEngine
+    if state.engine and hasattr(state.engine, "multi_engine"):
+        return state.engine.multi_engine.get_status()
 
+    from backend.strategies.multi_engine import MultiEngine
     kite = getattr(state.broker, "_kite", None) if state.broker else None
     engine = MultiEngine(kite=kite)
-
     return engine.get_status()
 
 
@@ -326,21 +312,27 @@ async def get_multi_engine_status(state: AppStateDep):
 async def run_multi_engine_cycle(state: AuthRequiredDep):
     """
     Run one daily cycle of the multi-engine system.
-    """
-    from backend.strategies.multi_engine import MultiEngine
 
+    Uses the running engine if bot is started.
+    """
+    if state.engine and hasattr(state.engine, "multi_engine"):
+        result = state.engine.multi_engine.run_daily()
+        return result
+
+    from backend.strategies.multi_engine import MultiEngine
     kite = getattr(state.broker, "_kite", None) if state.broker else None
     engine = MultiEngine(kite=kite)
-
-    result = engine.run_daily()
-    return result
+    return engine.run_daily()
 
 
 @router.post("/multi-engine/reset")
 async def reset_multi_engine(state: AuthRequiredDep):
     """Reset multi-engine state."""
-    from backend.strategies.multi_engine import MultiEngine
+    if state.engine and hasattr(state.engine, "multi_engine"):
+        state.engine.multi_engine.reset()
+        return {"success": True, "message": "Multi-engine state reset"}
 
+    from backend.strategies.multi_engine import MultiEngine
     engine = MultiEngine()
     engine.reset()
     return {"success": True, "message": "Multi-engine state reset"}

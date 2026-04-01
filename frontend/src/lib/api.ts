@@ -119,6 +119,41 @@ export interface PredictionSessionDetail {
   generated_at: string;
 }
 
+export interface ReversalStock {
+  symbol: string;
+  universe: "largecap" | "midcap";
+  score: number;
+  ret_5d: number;
+  ret_10d: number;
+  ret_21d: number;
+  price: number;
+  rank: number;
+  action: "BUY" | "WATCH" | "SKIP" | "BLOCKED" | "HELD";
+  reason: string;
+  today_return: number;
+}
+
+export interface ReversalResponse {
+  stocks: ReversalStock[];
+  regime: {
+    current: string;
+    pending: string | null;
+    pending_days: number;
+    total_exposure: number;
+  };
+  kill_switch: {
+    ic_killed: boolean;
+    rolling_ic: number | null;
+  };
+  summary: {
+    total_stocks: number;
+    buy_signals: number;
+    held_positions: number;
+    blocked: number;
+    generated_at: string;
+  };
+}
+
 export interface RiskStatus {
   circuit_breaker_triggered: boolean;
   circuit_breaker_reason: string | null;
@@ -318,6 +353,8 @@ export const api = {
     }>("/api/v1/portfolio/margin"),
 
   // Predictions
+  reversalScores: () =>
+    request<ReversalResponse>("/api/v1/predictions/reversal"),
   generatePredictions: (symbols?: string[], limit = 10) =>
     request<PredictionsResponse>("/api/v1/predictions/generate", {
       method: "POST",

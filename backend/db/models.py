@@ -206,6 +206,29 @@ class PredictionRecord(Base):
     )
 
 
+class OpenPosition(Base):
+    """Persisted open positions — survive container restarts for multi-day holds."""
+
+    __tablename__ = "open_positions"
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), unique=True, nullable=False)
+    quantity = Column(Integer, nullable=False)
+    entry_price = Column(Float, nullable=False)
+    is_short = Column(Boolean, default=False)
+    entry_reason = Column(String(200))
+    stop_loss_price = Column(Float)
+    target_price = Column(Float)
+    prediction_direction = Column(String(10))
+    prediction_confidence = Column(Float)
+    entry_time = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_open_pos_symbol", "symbol"),
+    )
+
+
 class IntraTrade(Base):
     """Intraday bot trades — persisted across container restarts."""
 

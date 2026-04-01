@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from backend.core.logger import get_logger
-from backend.core.symbols import NIFTY_50
+from backend.core.symbols import NIFTY_100
 from backend.ml.labeling import DEFAULT_FEATURES_PATH
 from backend.ml.train_model import ModelTrainer
 from backend.services.feature_engine import FeatureEngine, FEATURE_COLUMNS
@@ -124,16 +124,18 @@ class Backtester:
         retrain_every_days: int = 5,
         slippage_pct: float = 0.0005,  # 0.05%
         max_position_pct: float = 0.05,
-        max_long_exposure: float = 0.20,
-        max_short_exposure: float = 0.15,
-        max_total_exposure: float = 0.25,
-        long_stop_loss: float = 0.0015,      # -0.15% SL for longs
-        long_take_profit: float = 0.003,     # +0.3% TP for longs
-        short_stop_loss: float = 0.002,      # -0.2% SL for shorts
-        short_take_profit: float = 0.003,    # +0.3% TP for shorts
+        max_long_exposure: float = 0.40,
+        max_short_exposure: float = 0.20,
+        max_total_exposure: float = 0.50,
+        long_stop_loss: float = 0.05,         # -5% hard SL fallback for longs
+        long_take_profit: float = 0.04,      # +4% hard TP fallback for longs
+        short_stop_loss: float = 0.04,       # -4% hard SL fallback for shorts
+        short_take_profit: float = 0.04,     # +4% hard TP fallback for shorts
         min_confidence: float = 0.20,
-        long_max_hold_candles: int = 24,   # 2 hours at 5-min
-        short_max_hold_candles: int = 18,  # 1.5 hours at 5-min
+        long_max_hold_candles: int = 525,  # 7 trading days at 5-min (75 candles/day × 7)
+        short_max_hold_candles: int = 525, # 7 trading days
+        sl_atr_mult: float = 2.0,         # ATR-based SL multiplier
+        tp_atr_mult: float = 1.5,         # ATR-based TP multiplier
         enable_shorting: bool = True,
         cooldown_candles: int = 6,         # 30 min cooldown between trades on same stock
         max_trades_per_stock_per_day: int = 3,
@@ -160,6 +162,8 @@ class Backtester:
         self.min_confidence = min_confidence
         self.long_max_hold = long_max_hold_candles
         self.short_max_hold = short_max_hold_candles
+        self.sl_atr_mult = sl_atr_mult
+        self.tp_atr_mult = tp_atr_mult
         self.enable_shorting = enable_shorting
         self.cooldown_candles = cooldown_candles
         self.max_trades_per_stock_per_day = max_trades_per_stock_per_day
@@ -168,7 +172,7 @@ class Backtester:
         self.stock_filter_pct = stock_filter_pct
         self.test_start_date = test_start_date
         self.test_end_date = test_end_date
-        self.symbols = symbols or NIFTY_50
+        self.symbols = symbols or NIFTY_100
 
         self.costs = ZerodhaCosts()
         self.trades: list[BacktestTrade] = []
@@ -580,6 +584,19 @@ class Backtester:
         else:
             entry_price = price * (1 + self.slippage_pct)
 
+        # Compute ATR-based SL/TP if ATR is available in the row
+        raw_atr = row.get("atr", 0) * price if row.get("atr", 0) > 0 else 0
+        if raw_atr > 0:
+            if is_short:
+                sl_price = entry_price + (raw_atr * self.sl_atr_mult)
+                tp_price = entry_price - (raw_atr * self.tp_atr_mult)
+            else:
+                sl_price = entry_price - (raw_atr * self.sl_atr_mult)
+                tp_price = entry_price + (raw_atr * self.tp_atr_mult)
+        else:
+            sl_price = None
+            tp_price = None
+
         self._positions[symbol] = {
             "side": "SHORT" if is_short else "LONG",
             "entry_price": entry_price,
@@ -588,6 +605,8 @@ class Backtester:
             "candles_held": 0,
             "confidence": signal["confidence"],
             "direction": signal["direction"],
+            "sl_price": sl_price,
+            "tp_price": tp_price,
         }
 
         self._stock_trades_today[symbol] = self._stock_trades_today.get(symbol, 0) + 1
@@ -607,23 +626,43 @@ class Backtester:
         else:
             pnl_pct = (current_price - entry_price) / entry_price
 
-        # Exit conditions
+        # Exit conditions (ATR-based first, then fixed % fallback)
         exit_reason = None
+        sl_price = pos.get("sl_price")
+        tp_price = pos.get("tp_price")
 
-        if is_short:
-            if pnl_pct <= -self.short_stop_loss:
-                exit_reason = "stop_loss"
-            elif pnl_pct >= self.short_take_profit:
-                exit_reason = "take_profit"
-            elif pos["candles_held"] >= self.short_max_hold:
-                exit_reason = "max_hold_time"
-        else:
-            if pnl_pct <= -self.long_stop_loss:
-                exit_reason = "stop_loss"
-            elif pnl_pct >= self.long_take_profit:
-                exit_reason = "take_profit"
-            elif pos["candles_held"] >= self.long_max_hold:
-                exit_reason = "max_hold_time"
+        # 1. ATR-based stop-loss
+        if sl_price:
+            if is_short and current_price >= sl_price:
+                exit_reason = "stop_loss_atr"
+            elif not is_short and current_price <= sl_price:
+                exit_reason = "stop_loss_atr"
+
+        # 2. ATR-based take-profit
+        if not exit_reason and tp_price:
+            if is_short and current_price <= tp_price:
+                exit_reason = "take_profit_atr"
+            elif not is_short and current_price >= tp_price:
+                exit_reason = "take_profit_atr"
+
+        # 3. Fixed % fallback SL/TP
+        if not exit_reason:
+            if is_short:
+                if pnl_pct <= -self.short_stop_loss:
+                    exit_reason = "stop_loss_hard"
+                elif pnl_pct >= self.short_take_profit:
+                    exit_reason = "take_profit_hard"
+            else:
+                if pnl_pct <= -self.long_stop_loss:
+                    exit_reason = "stop_loss_hard"
+                elif pnl_pct >= self.long_take_profit:
+                    exit_reason = "take_profit_hard"
+
+        # 4. Max hold time
+        if not exit_reason:
+            max_hold = self.short_max_hold if is_short else self.long_max_hold
+            if pos["candles_held"] >= max_hold:
+                exit_reason = "max_hold_days"
 
         if exit_reason:
             return self._close_position(symbol, current_price, row["timestamp"], exit_reason)

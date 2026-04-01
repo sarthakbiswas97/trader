@@ -105,6 +105,7 @@ class TradeExecutor:
         self,
         ranked_stocks: list[RankedStock],
         available_capital: float,
+        atr_values: dict[str, float] | None = None,
     ) -> list[TradeResult]:
         """
         Execute entry orders for ranked stocks (both long and short).
@@ -112,10 +113,12 @@ class TradeExecutor:
         Args:
             ranked_stocks: Stocks ranked by signal quality
             available_capital: Capital available for trading
+            atr_values: Optional dict of symbol -> ATR value for dynamic SL/TP
 
         Returns:
             List of TradeResult for each attempted trade
         """
+        atr_values = atr_values or {}
         results = []
 
         for stock in ranked_stocks:
@@ -166,13 +169,15 @@ class TradeExecutor:
                 logger.info(f"Position size too small for {stock.symbol}")
                 continue
 
-            # Execute order
+            # Execute order with ATR for dynamic SL/TP
+            stock_atr = atr_values.get(stock.symbol)
             if is_short:
                 result = self._execute_short_entry(
                     symbol=stock.symbol,
                     quantity=quantity,
                     prediction=stock.prediction,
                     entry_reason=f"SHORT signal (score: {stock.score:.1f})",
+                    atr=stock_atr,
                 )
             else:
                 result = self._execute_buy(
@@ -180,6 +185,7 @@ class TradeExecutor:
                     quantity=quantity,
                     prediction=stock.prediction,
                     entry_reason=f"LONG signal (score: {stock.score:.1f})",
+                    atr=stock_atr,
                 )
 
             results.append(result)
@@ -233,27 +239,31 @@ class TradeExecutor:
         quantity: int,
         prediction: Prediction,
         entry_reason: str,
+        atr: float | None = None,
     ) -> TradeResult:
-        """Execute a buy order."""
+        """Execute a buy order (CNC for swing holding)."""
         order = Order(
             symbol=symbol,
             quantity=quantity,
             side=OrderSide.BUY,
             order_type=OrderType.MARKET,
-            product=ProductType.MIS,  # Intraday
+            product=ProductType.CNC,
         )
 
         try:
             response = self.broker.place_order(order)
 
             if response.status == OrderStatus.EXECUTED:
-                # Record in position manager
+                # Record in position manager with ATR-based SL/TP
                 self.positions.open_position(
                     symbol=symbol,
                     quantity=quantity,
                     entry_price=response.executed_price or 0,
                     prediction=prediction,
                     entry_reason=entry_reason,
+                    atr=atr,
+                    sl_atr_mult=self.risk.config.long_sl_atr_mult,
+                    tp_atr_mult=self.risk.config.long_tp_atr_mult,
                 )
 
                 result = TradeResult(
@@ -318,14 +328,15 @@ class TradeExecutor:
         quantity: int,
         prediction: Prediction,
         entry_reason: str,
+        atr: float | None = None,
     ) -> TradeResult:
-        """Execute a short entry (SELL first)."""
+        """Execute a short entry (SELL first, CNC for swing)."""
         order = Order(
             symbol=symbol,
             quantity=quantity,
             side=OrderSide.SELL,
             order_type=OrderType.MARKET,
-            product=ProductType.MIS,
+            product=ProductType.CNC,
         )
 
         try:
@@ -339,8 +350,9 @@ class TradeExecutor:
                     prediction=prediction,
                     is_short=True,
                     entry_reason=entry_reason,
-                    stop_loss_pct=self.risk.config.short_stop_loss_pct,
-                    target_pct=self.risk.config.short_take_profit_pct,
+                    atr=atr,
+                    sl_atr_mult=self.risk.config.short_sl_atr_mult,
+                    tp_atr_mult=self.risk.config.short_tp_atr_mult,
                 )
 
                 result = TradeResult(
@@ -400,6 +412,7 @@ class TradeExecutor:
                     broker_pos,
                     is_short=position.is_short,
                     holding_minutes=position.holding_time_minutes,
+                    managed_position=position,
                 )
             else:
                 should_exit, reason = False, ""
@@ -443,7 +456,7 @@ class TradeExecutor:
             quantity=quantity,
             side=OrderSide.SELL,
             order_type=OrderType.MARKET,
-            product=ProductType.MIS,
+            product=ProductType.CNC,
         )
 
         try:
@@ -523,7 +536,7 @@ class TradeExecutor:
             quantity=quantity,
             side=OrderSide.BUY,
             order_type=OrderType.MARKET,
-            product=ProductType.MIS,
+            product=ProductType.CNC,
         )
 
         try:
