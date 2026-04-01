@@ -27,6 +27,36 @@ async def lifespan(app: FastAPI):
         create_tables()
     except Exception as e:
         logger.warning(f"DB table creation skipped: {e}")
+
+    # Auto-start bot if broker is authenticated
+    try:
+        import asyncio
+        from backend.api.dependencies import get_app_state
+        from backend.services.execution_engine import create_engine
+        from backend.broker.session import load_access_token
+
+        state = get_app_state()
+        access_token = load_access_token()
+
+        if access_token and state.broker and state.is_authenticated:
+            engine = create_engine(broker=state.broker)
+            engine.running = True
+            state.engine = engine
+
+            async def run_engine():
+                try:
+                    await engine.run()
+                except Exception as e:
+                    logger.error(f"Auto-started engine error: {e}")
+                    engine.running = False
+
+            asyncio.get_event_loop().create_task(run_engine())
+            logger.info("Bot auto-started on server boot")
+        else:
+            logger.info("Bot not auto-started — broker not authenticated")
+    except Exception as e:
+        logger.warning(f"Bot auto-start skipped: {e}")
+
     yield
     logger.info("Shutting down application...")
 

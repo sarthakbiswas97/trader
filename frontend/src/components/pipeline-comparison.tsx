@@ -189,20 +189,28 @@ export function PipelineComparisonPanel() {
 
   if (!comparison || Object.keys(comparison).length === 0) {
     return (
-      <Card>
-        <CardHeader className="pb-2 px-4 pt-3">
-          <CardTitle className="text-sm font-medium flex items-center gap-1.5">
-            <FlaskConical className="h-3.5 w-3.5" />
-            A/B Pipeline Testing
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          <p className="text-xs text-muted-foreground">
-            Start the bot to begin A/B testing. Pipeline A scans every 2 hours,
-            Pipeline B every 30 minutes.
-          </p>
-        </CardContent>
-      </Card>
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <FlaskConical className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">A/B Pipeline Testing</h2>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Card className="border-dashed">
+            <CardContent className="px-4 py-6 text-center">
+              <p className="text-sm font-medium text-muted-foreground">Pipeline A</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">2-hour scan interval</p>
+              <p className="text-xs text-muted-foreground/40 mt-3">Waiting for bot to start...</p>
+            </CardContent>
+          </Card>
+          <Card className="border-dashed">
+            <CardContent className="px-4 py-6 text-center">
+              <p className="text-sm font-medium text-muted-foreground">Pipeline B</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">30-min scan interval</p>
+              <p className="text-xs text-muted-foreground/40 mt-3">Waiting for bot to start...</p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     );
   }
 
@@ -226,43 +234,16 @@ export function PipelineComparisonPanel() {
         ))}
       </div>
 
-      {/* Detail panel for selected pipeline */}
-      {detail && (
+      {/* Detail panel — only show when there are positions or trades */}
+      {detail && detail.positions.length > 0 && (
         <Card>
           <CardHeader className="pb-2 px-4 pt-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              Pipeline {detail.pipeline} — {detail.label}
-              <Badge variant="outline" className="text-[10px]">
-                {detail.regime}
-              </Badge>
+            <CardTitle className="text-sm font-medium">
+              Pipeline {detail.pipeline} — Open Positions ({detail.positions.length})
             </CardTitle>
           </CardHeader>
-          <CardContent className="px-4 pb-4 space-y-3">
-            <div className="grid grid-cols-4 gap-3">
-              <div>
-                <p className="text-[10px] text-muted-foreground">P&L</p>
-                <PnlText value={detail.total_pnl} className="text-sm font-bold" />
-              </div>
-              <div>
-                <p className="text-[10px] text-muted-foreground">Win Rate</p>
-                <p className="text-sm font-bold">{detail.win_rate.toFixed(0)}%</p>
-              </div>
-              <div>
-                <p className="text-[10px] text-muted-foreground">Trades</p>
-                <p className="text-sm font-bold">{detail.total_trades}</p>
-              </div>
-              <div>
-                <p className="text-[10px] text-muted-foreground">Cash</p>
-                <p className="text-sm font-bold">{formatCurrency(detail.cash)}</p>
-              </div>
-            </div>
-
-            <div>
-              <p className="text-xs font-medium mb-2">
-                Open Positions ({detail.positions.length})
-              </p>
-              <PipelinePositions detail={detail} />
-            </div>
+          <CardContent className="px-4 pb-4">
+            <PipelinePositions detail={detail} />
           </CardContent>
         </Card>
       )}

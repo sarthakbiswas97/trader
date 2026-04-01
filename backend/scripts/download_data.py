@@ -19,19 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from backend.services.historical_data import HistoricalDataService
 from backend.broker.session import load_access_token
 from backend.config import settings
-
-NIFTY_50 = [
-    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
-    "HINDUNILVR", "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK",
-    "LT", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
-    "TITAN", "SUNPHARMA", "ULTRACEMCO", "NESTLEIND", "WIPRO",
-    "HCLTECH", "TATAMOTORS", "POWERGRID", "NTPC", "TECHM",
-    "M&M", "BAJAJFINSV", "ONGC", "ADANIENT", "ADANIPORTS",
-    "COALINDIA", "JSWSTEEL", "TATASTEEL", "GRASIM", "INDUSINDBK",
-    "BRITANNIA", "CIPLA", "DRREDDY", "DIVISLAB", "EICHERMOT",
-    "HEROMOTOCO", "BPCL", "APOLLOHOSP", "SBILIFE", "TATACONSUM",
-    "HINDALCO", "LTIM", "BAJAJ-AUTO", "SHRIRAMFIN", "TRENT"
-]
+from backend.core.symbols import NIFTY_100
 
 
 def main():
@@ -74,7 +62,7 @@ def main():
     elif args.test:
         symbols = ["RELIANCE", "TCS", "INFY"]
     else:
-        symbols = NIFTY_50
+        symbols = NIFTY_100
 
     print(f"\nSymbols: {len(symbols)}")
     print(f"Days: {args.days}")

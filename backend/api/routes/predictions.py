@@ -374,6 +374,22 @@ async def get_reversal_scores(state: AppStateDep):
     largecap_scores = compute_reversal_scores(NIFTY_50, prices, ds)
     midcap_scores = compute_reversal_scores(NIFTY_100_EXTRA, prices, ds)
 
+    # Determine actual data date (from saved candle files)
+    from backend.utils.time_utils import is_market_open
+    data_date = None
+    try:
+        sample_df = ds.load_candles("RELIANCE", "1d")
+        if not sample_df.empty:
+            last_ts = sample_df["timestamp"].iloc[-1]
+            if hasattr(last_ts, "date"):
+                data_date = str(last_ts.date())
+            else:
+                data_date = str(last_ts)[:10]
+    except Exception:
+        pass
+    market_open = is_market_open()
+    has_live_prices = me.kite is not None and market_open
+
     # Get held symbols
     held_symbols = set()
     for engine_state in me.engine_states.values():
@@ -453,6 +469,12 @@ async def get_reversal_scores(state: AppStateDep):
         "kill_switch": {
             "ic_killed": ic_killed,
             "rolling_ic": round(rolling_ic, 4) if rolling_ic is not None else None,
+        },
+        "data_source": {
+            "market_open": market_open,
+            "live_prices": has_live_prices,
+            "data_date": data_date,
+            "source": "Zerodha (real-time)" if has_live_prices else f"Last close ({data_date})" if data_date else "Saved data",
         },
         "summary": {
             "total_stocks": len(stocks),

@@ -63,16 +63,29 @@ async def market_status():
     """
     state = get_app_state()
 
+    from backend.utils.time_utils import is_market_open
+
     nifty_change = 0.0
     nifty_price = 0.0
     breadth_falling = 0
     breadth_total = 0
-    should_trade = True
-    reason = "Market data not available"
+    market_open = is_market_open()
+    should_trade = False
+    reason = "Market closed — opens 9:15 AM IST"
 
-    if state.broker and state.is_authenticated:
+    if not market_open:
+        # Still try to get last known NIFTY price for display
+        if state.broker and state.is_authenticated:
+            try:
+                kite = getattr(state.broker, "_kite", None)
+                if kite:
+                    nifty = kite.ltp(["NSE:NIFTY 50"])
+                    nifty_price = nifty.get("NSE:NIFTY 50", {}).get("last_price", 0)
+            except Exception:
+                pass
+
+    if market_open and state.broker and state.is_authenticated:
         try:
-            # Get NIFTY
             broker = state.broker
             if hasattr(broker, "_kite") and broker._kite:
                 kite = broker._kite
@@ -87,7 +100,6 @@ async def market_status():
                 # Breadth: check a sample of stocks
                 from backend.core.symbols import NIFTY_50
                 sample = NIFTY_50[:20]
-                ltp = kite.ltp([f"NSE:{s}" for s in sample])
                 ohlc_data = kite.ohlc([f"NSE:{s}" for s in sample])
 
                 for s in sample:
@@ -126,6 +138,7 @@ async def market_status():
         trade_probability = "low"
 
     return {
+        "market_open": market_open,
         "nifty_change": nifty_change,
         "nifty_price": nifty_price,
         "breadth_falling": breadth_falling,

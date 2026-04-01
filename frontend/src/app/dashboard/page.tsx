@@ -272,53 +272,13 @@ export default function DashboardPage() {
       {/* Connection Banner (only shows briefly before auto-connect) */}
       <ConnectionBanner health={health} onConnect={handleConnect} connecting={connecting} />
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard
-          title="Total Capital"
-          value={formatCurrency(portfolio?.total_capital ?? 100000)}
-          icon={Wallet}
-        />
-        <StatCard
-          title="Total P&L"
-          value={formatCurrency(portfolio?.total_pnl ?? 0)}
-          subtitle={
-            portfolio
-              ? `${portfolio.total_pnl_percent >= 0 ? "+" : ""}${portfolio.total_pnl_percent.toFixed(2)}%`
-              : undefined
-          }
-          icon={TrendingUp}
-          trend={
-            (portfolio?.total_pnl ?? 0) > 0
-              ? "profit"
-              : (portfolio?.total_pnl ?? 0) < 0
-                ? "loss"
-                : "neutral"
-          }
-        />
-        <StatCard
-          title="Open Positions"
-          value={String(portfolio?.open_positions ?? 0)}
-          subtitle={portfolio ? `${formatCurrency(portfolio.invested_value)} invested` : undefined}
-          icon={BarChart3}
-        />
-        <StatCard
-          title="Bot Cycles"
-          value={String(botStatus?.cycle_count ?? 0)}
-          subtitle={
-            botStatus?.last_cycle
-              ? `Last: ${new Date(botStatus.last_cycle).toLocaleTimeString()}`
-              : "Not running"
-          }
-          icon={Activity}
-        />
-      </div>
+      {/* Stats moved to A/B pipeline cards */}
+
+      {/* A/B Pipeline Comparison — Primary section */}
+      <PipelineComparisonPanel />
 
       {/* Multi-Engine Regime Status */}
       <RegimeStatus />
-
-      {/* A/B Pipeline Comparison */}
-      <PipelineComparisonPanel />
 
       {/* Hot Watchlist */}
       {watchlist && watchlist.tier1_count > 0 && (

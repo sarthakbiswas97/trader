@@ -187,7 +187,7 @@ class ReversalEngine:
         ds = HistoricalDataService()
         prices = {}
         for symbol in self.symbols:
-            df = ds.load_candles(symbol, "daily")
+            df = ds.load_candles(symbol, "1d")
             if not df.empty:
                 prices[symbol] = float(df.iloc[-1]["close"])
         return prices
@@ -200,7 +200,7 @@ class ReversalEngine:
         # Need historical closes for momentum calculation
         scores = {}
         for symbol in self.symbols:
-            df = ds.load_candles(symbol, "daily")
+            df = ds.load_candles(symbol, "1d")
             if df.empty or len(df) < 25:
                 continue
 
@@ -366,7 +366,7 @@ class ReversalEngine:
             falling = 0
             total = 0
             for symbol, current_price in list(prices.items())[:50]:
-                df = ds.load_candles(symbol, "daily")
+                df = ds.load_candles(symbol, "1d")
                 if df.empty:
                     continue
                 prev_close = df.iloc[-1]["close"]

@@ -144,6 +144,12 @@ export interface ReversalResponse {
     ic_killed: boolean;
     rolling_ic: number | null;
   };
+  data_source: {
+    market_open: boolean;
+    live_prices: boolean;
+    data_date: string | null;
+    source: string;
+  };
   summary: {
     total_stocks: number;
     buy_signals: number;

@@ -11,6 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 
 interface MarketStatusData {
+  market_open: boolean;
   nifty_change: number;
   nifty_price: number;
   breadth_falling: number;
@@ -95,7 +96,12 @@ export function MarketStatusBanner() {
 
       {/* Trade signal */}
       <div className="flex items-center gap-2">
-        {status.should_trade ? (
+        {!status.market_open ? (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted border border-border/50">
+            <Minus className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs font-medium text-muted-foreground">Market Closed</span>
+          </div>
+        ) : status.should_trade ? (
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-profit/10 border border-profit/20">
             <ShieldCheck className="h-3.5 w-3.5 text-profit" />
             <span className="text-xs font-medium text-profit">Trade Active</span>

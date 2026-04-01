@@ -225,9 +225,11 @@ class MultiEngine:
         self,
         kite=None,
         total_capital: float = 100000.0,
+        broker=None,
     ):
         self.kite = kite
         self.total_capital = total_capital
+        self.broker = broker  # PaperBroker for actual order execution
 
         # Regime classifier (already has 2-day persistence — Fix #3)
         self.regime_classifier = RegimeClassifier()
@@ -536,7 +538,7 @@ class MultiEngine:
         ds = HistoricalDataService()
         prices = {}
         for symbol in all_symbols:
-            df = ds.load_candles(symbol, "daily")
+            df = ds.load_candles(symbol, "1d")
             if not df.empty:
                 prices[symbol] = float(df.iloc[-1]["close"])
         return prices
@@ -668,7 +670,35 @@ class MultiEngine:
 
         if batch["stocks"]:
             state.positions.append(batch)
+
+            # Execute through broker if available (paper trading)
+            if self.broker:
+                self._execute_broker_entries(batch["stocks"])
+
             logger.info(f"[{config.name}] Entered {len(batch['stocks'])} positions")
+
+    def _execute_broker_entries(self, stocks: list[dict]) -> None:
+        """Execute entry orders through the broker (PaperBroker)."""
+        try:
+            from backend.broker.base import Order, OrderSide, OrderType, ProductType
+
+            for stock in stocks:
+                order = Order(
+                    symbol=stock["symbol"],
+                    quantity=stock["quantity"],
+                    side=OrderSide.BUY,
+                    order_type=OrderType.MARKET,
+                    product=ProductType.CNC,
+                )
+                response = self.broker.place_order(order)
+                logger.info(
+                    f"Broker BUY executed",
+                    symbol=stock["symbol"],
+                    quantity=stock["quantity"],
+                    price=response.executed_price,
+                )
+        except Exception as e:
+            logger.warning(f"Broker entry execution failed: {e}")
 
     def _check_engine_exits(
         self, config: EngineConfig, state: EngineState, prices: dict, today: date
@@ -707,11 +737,41 @@ class MultiEngine:
                     }
                     state.trade_history.append(trade)
                     exits.append(trade)
+
+                # Execute exit through broker if available
+                if self.broker:
+                    self._execute_broker_exits(
+                        [s for s in batch["stocks"]],
+                        prices,
+                    )
             else:
                 remaining.append(batch)
 
         state.positions = remaining
         return exits
+
+    def _execute_broker_exits(self, stocks: list[dict], prices: dict) -> None:
+        """Execute exit orders through the broker (PaperBroker)."""
+        try:
+            from backend.broker.base import Order, OrderSide, OrderType, ProductType
+
+            for stock in stocks:
+                order = Order(
+                    symbol=stock["symbol"],
+                    quantity=stock["quantity"],
+                    side=OrderSide.SELL,
+                    order_type=OrderType.MARKET,
+                    product=ProductType.CNC,
+                )
+                response = self.broker.place_order(order)
+                logger.info(
+                    f"Broker SELL executed",
+                    symbol=stock["symbol"],
+                    quantity=stock["quantity"],
+                    price=response.executed_price,
+                )
+        except Exception as e:
+            logger.warning(f"Broker exit execution failed: {e}")
 
     # =========================================================================
     # Signal Health & Portfolio Metrics (for dynamic allocation)

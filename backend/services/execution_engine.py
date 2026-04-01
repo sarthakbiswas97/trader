@@ -483,6 +483,8 @@ class ABReversalEngine:
         from backend.strategies.multi_engine import MultiEngine
         from backend.core.symbols import NIFTY_100
 
+        from backend.broker.paper import PaperBroker
+
         self.broker = broker
         self.symbols = NIFTY_100
         self.running = False
@@ -491,20 +493,44 @@ class ABReversalEngine:
         self._latest_predictions: dict = {}
 
         kite = getattr(broker, "_kite", None)
+        kite_api_key = getattr(broker, "kite_api_key", None)
+        kite_api_secret = getattr(broker, "kite_api_secret", None)
+        access_token = getattr(broker, "_access_token", None)
 
-        # Two independent pipelines
+        # Separate PaperBroker per pipeline — independent capital and positions
+        broker_a = PaperBroker(
+            initial_capital=PIPELINE_CAPITAL,
+            kite_api_key=kite_api_key,
+            kite_api_secret=kite_api_secret,
+        )
+        broker_b = PaperBroker(
+            initial_capital=PIPELINE_CAPITAL,
+            kite_api_key=kite_api_key,
+            kite_api_secret=kite_api_secret,
+        )
+        # Authenticate both with same Kite session for real market data
+        if access_token:
+            broker_a.authenticate(access_token=access_token)
+            broker_b.authenticate(access_token=access_token)
+        else:
+            broker_a.authenticate()
+            broker_b.authenticate()
+
+        self.brokers = {"A": broker_a, "B": broker_b}
+
+        # Two independent pipelines with their own brokers
         self.pipelines: dict[str, PipelineState] = {
             "A": PipelineState(
                 name="A",
                 label="2-hour scan",
                 interval_secs=PIPELINE_A_INTERVAL,
-                multi_engine=MultiEngine(kite=kite, total_capital=PIPELINE_CAPITAL),
+                multi_engine=MultiEngine(kite=kite, total_capital=PIPELINE_CAPITAL, broker=broker_a),
             ),
             "B": PipelineState(
                 name="B",
                 label="30-min scan",
                 interval_secs=PIPELINE_B_INTERVAL,
-                multi_engine=MultiEngine(kite=kite, total_capital=PIPELINE_CAPITAL),
+                multi_engine=MultiEngine(kite=kite, total_capital=PIPELINE_CAPITAL, broker=broker_b),
             ),
         }
 

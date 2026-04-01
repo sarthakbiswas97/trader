@@ -423,14 +423,7 @@ export default function SettingsPage() {
               </button>
             )}
 
-            <button
-              onClick={handleSquareOff}
-              disabled={!connected || botAction !== null}
-              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md border border-loss/30 text-loss hover:bg-loss/5 transition-colors disabled:opacity-30"
-            >
-              <AlertTriangle className="h-3.5 w-3.5" />
-              Square Off All
-            </button>
+            {/* Square Off removed — system manages entries/exits autonomously */}
           </div>
 
           {!connected && (

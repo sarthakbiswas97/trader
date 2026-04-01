@@ -424,6 +424,50 @@ async def get_pipelines(state: AppStateDep):
     return state.engine.get_status()
 
 
+@router.get("/pipelines/compare")
+async def compare_pipelines(state: AppStateDep):
+    """Side-by-side comparison of pipeline A vs B."""
+    if not state.engine or not hasattr(state.engine, "pipelines"):
+        return {"comparison": {}}
+
+    comparison = {}
+    for pid, p in state.engine.pipelines.items():
+        me = p.multi_engine
+        pipeline_broker = state.engine.brokers.get(pid) if hasattr(state.engine, "brokers") else None
+
+        total_trades = sum(len(s.trade_history) for s in me.engine_states.values())
+        wins = sum(
+            1 for s in me.engine_states.values()
+            for t in s.trade_history if t.get("net_pnl", 0) > 0
+        )
+        open_count = sum(
+            len(b["stocks"])
+            for s in me.engine_states.values()
+            for b in s.positions
+        )
+
+        broker_positions = pipeline_broker.get_positions() if pipeline_broker else []
+        realized = pipeline_broker.realized_pnl if pipeline_broker else 0
+        unrealized = sum(pos.pnl for pos in broker_positions)
+        total_pnl = realized + unrealized
+        broker_capital = pipeline_broker.capital if pipeline_broker else PIPELINE_CAPITAL
+
+        comparison[pid] = {
+            "label": p.label,
+            "scan_count": p.scan_count,
+            "last_scan": p.last_scan.isoformat() if p.last_scan else None,
+            "total_pnl": round(total_pnl, 2),
+            "pnl_pct": round(total_pnl / PIPELINE_CAPITAL * 100, 2) if PIPELINE_CAPITAL else 0,
+            "total_trades": total_trades,
+            "win_rate": round(wins / total_trades * 100, 1) if total_trades > 0 else 0,
+            "open_positions": open_count,
+            "capital": PIPELINE_CAPITAL,
+            "portfolio_value": round(broker_capital + unrealized, 2),
+        }
+
+    return {"comparison": comparison}
+
+
 @router.get("/pipelines/{pipeline_id}")
 async def get_pipeline_detail(state: AppStateDep, pipeline_id: str):
     """Get detailed status for a specific pipeline (A or B)."""
@@ -435,15 +479,31 @@ async def get_pipeline_detail(state: AppStateDep, pipeline_id: str):
         return {"error": f"Pipeline {pipeline_id} not found"}
 
     me = pipeline.multi_engine
+    pid = pipeline_id.upper()
+
+    # Get live positions from the pipeline's own broker
+    pipeline_broker = state.engine.brokers.get(pid) if hasattr(state.engine, "brokers") else None
+    broker_positions = pipeline_broker.get_positions() if pipeline_broker else []
+
     positions = []
     for name, engine_state in me.engine_states.items():
         for batch in engine_state.positions:
             for stock in batch["stocks"]:
+                # Find current price from broker
+                current_price = stock["entry_price"]
+                for bp in broker_positions:
+                    if bp.symbol == stock["symbol"]:
+                        current_price = bp.current_price
+                        break
+                pnl = (current_price - stock["entry_price"]) * stock["quantity"]
+
                 positions.append({
                     "symbol": stock["symbol"],
                     "engine": name,
                     "entry_price": stock["entry_price"],
+                    "current_price": current_price,
                     "quantity": stock["quantity"],
+                    "pnl": round(pnl, 2),
                     "score": stock.get("score", 0),
                     "entry_date": batch["entry_date"],
                 })
@@ -461,6 +521,11 @@ async def get_pipeline_detail(state: AppStateDep, pipeline_id: str):
         for t in s.trade_history if t.get("net_pnl", 0) > 0
     )
 
+    # Broker P&L (actual paper trading)
+    broker_realized = pipeline_broker.realized_pnl if pipeline_broker else 0
+    broker_unrealized = sum(p.pnl for p in broker_positions)
+    broker_capital = pipeline_broker.capital if pipeline_broker else PIPELINE_CAPITAL
+
     return {
         "pipeline": pipeline.name,
         "label": pipeline.label,
@@ -469,11 +534,11 @@ async def get_pipeline_detail(state: AppStateDep, pipeline_id: str):
         "last_scan": pipeline.last_scan.isoformat() if pipeline.last_scan else None,
         "regime": me.current_regime.value if me.current_regime else "unknown",
         "capital": PIPELINE_CAPITAL,
-        "portfolio_value": me.cash + sum(
-            s.capital for s in me.engine_states.values()
-        ),
-        "cash": me.cash,
-        "total_pnl": total_pnl,
+        "portfolio_value": broker_capital + broker_unrealized,
+        "cash": broker_capital,
+        "total_pnl": broker_realized + broker_unrealized,
+        "realized_pnl": broker_realized,
+        "unrealized_pnl": broker_unrealized,
         "total_trades": total_trades,
         "win_rate": (wins / total_trades * 100) if total_trades > 0 else 0,
         "positions": positions,
@@ -515,42 +580,3 @@ async def get_pipeline_scans(pipeline_id: str, limit: int = 50):
         return {"pipeline": pipeline_id.upper(), "scans": [], "error": str(e)}
 
 
-@router.get("/pipelines/compare")
-async def compare_pipelines(state: AppStateDep):
-    """Side-by-side comparison of pipeline A vs B."""
-    if not state.engine or not hasattr(state.engine, "pipelines"):
-        return {"comparison": {}}
-
-    comparison = {}
-    for pid, p in state.engine.pipelines.items():
-        me = p.multi_engine
-        total_trades = sum(len(s.trade_history) for s in me.engine_states.values())
-        total_pnl = sum(
-            t.get("net_pnl", 0)
-            for s in me.engine_states.values()
-            for t in s.trade_history
-        )
-        wins = sum(
-            1 for s in me.engine_states.values()
-            for t in s.trade_history if t.get("net_pnl", 0) > 0
-        )
-        open_count = sum(
-            len(b["stocks"])
-            for s in me.engine_states.values()
-            for b in s.positions
-        )
-
-        comparison[pid] = {
-            "label": p.label,
-            "scan_count": p.scan_count,
-            "last_scan": p.last_scan.isoformat() if p.last_scan else None,
-            "total_pnl": round(total_pnl, 2),
-            "pnl_pct": round(total_pnl / PIPELINE_CAPITAL * 100, 2) if PIPELINE_CAPITAL else 0,
-            "total_trades": total_trades,
-            "win_rate": round(wins / total_trades * 100, 1) if total_trades > 0 else 0,
-            "open_positions": open_count,
-            "capital": PIPELINE_CAPITAL,
-            "portfolio_value": round(me.cash + sum(s.capital for s in me.engine_states.values()), 2),
-        }
-
-    return {"comparison": comparison}

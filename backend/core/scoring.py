@@ -33,7 +33,7 @@ def compute_reversal_scores(
 
     raw_scores = {}
     for symbol in symbols:
-        df = ds.load_candles(symbol, "daily")
+        df = ds.load_candles(symbol, "1d")
         if df.empty or len(df) < 25:
             continue
 
