@@ -277,11 +277,20 @@ export default function PredictionsPage() {
       {/* Market Status */}
       <MarketStatusBanner />
 
-      {/* Error */}
+      {/* Error / Market Closed */}
       {error && (
-        <Card className="border-loss/20 bg-loss/5">
-          <CardContent className="px-4 py-3 text-sm text-loss">
-            {error}
+        <Card className="border-yellow-500/20 bg-yellow-500/5">
+          <CardContent className="px-4 py-3 space-y-1">
+            <p className="text-sm font-medium text-yellow-500">
+              Scanner unavailable
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {error.includes("401") || error.includes("auth")
+                ? "Broker not connected. Run 'make deploy-auth' to authenticate."
+                : error.includes("404") || error.includes("Not Found")
+                  ? "Market data not available. Try again during market hours (9:15 AM - 3:30 PM IST)."
+                  : `Could not load scores. This usually means the market is closed or data hasn't been downloaded yet. Try clicking "Scan Now" during market hours.`}
+            </p>
           </CardContent>
         </Card>
       )}
@@ -339,8 +348,11 @@ export default function PredictionsPage() {
       {!loading && !data && !error && (
         <div className="flex flex-col items-center justify-center py-16 text-muted-foreground/50">
           <TrendingDown className="h-10 w-10 mb-3" />
-          <p className="text-sm font-medium">No scan results</p>
-          <p className="text-xs mt-1">Click &quot;Scan Now&quot; to analyze NIFTY 100</p>
+          <p className="text-sm font-medium">Reversal scanner ready</p>
+          <p className="text-xs mt-1 text-center max-w-sm">
+            Click &quot;Scan Now&quot; to rank all 100 NIFTY stocks by how oversold they are.
+            Best during market hours (9:15 AM - 3:30 PM IST).
+          </p>
         </div>
       )}
 

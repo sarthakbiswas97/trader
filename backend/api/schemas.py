@@ -56,10 +56,9 @@ class HealthResponse(BaseModel):
 
 
 class AuthStatus(BaseModel):
-    """Authentication status."""
+    """Authentication status — no sensitive data exposed."""
     authenticated: bool
-    user_id: str | None = None
-    user_name: str | None = None
+    connected: bool = False
     session_valid: bool = False
     expires_at: str | None = None
 

@@ -28,8 +28,7 @@ async def get_auth_status(state: AppStateDep):
     if session and state.is_authenticated:
         return AuthStatus(
             authenticated=True,
-            user_id=session.get("user_id"),
-            user_name=session.get("user_name"),
+            connected=True,
             session_valid=True,
             expires_at=session.get("expires_at"),
         )
@@ -37,14 +36,14 @@ async def get_auth_status(state: AppStateDep):
     if session:
         return AuthStatus(
             authenticated=False,
-            user_id=session.get("user_id"),
-            user_name=session.get("user_name"),
+            connected=False,
             session_valid=False,
-            expires_at="Session expired - re-authenticate required",
+            expires_at="Session expired",
         )
 
     return AuthStatus(
         authenticated=False,
+        connected=False,
         session_valid=False,
     )
 
@@ -60,11 +59,11 @@ async def get_login_url():
     3. Get redirected back with request_token
     4. Call /auth/callback with the request_token
     """
-    login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={settings.kite_api_key}"
-
+    # Don't expose API key in frontend response
+    # Auth is done server-side via make deploy-auth
     return LoginUrlResponse(
-        login_url=login_url,
-        callback_url="http://127.0.0.1:5000",
+        login_url="Use 'make deploy-auth' from terminal",
+        callback_url="Server-side only",
     )
 
 
@@ -125,18 +124,20 @@ async def auth_callback(request_token: str, action: str = "login", status: str =
 
 
 @router.post("/connect", response_model=SuccessResponse)
-async def connect_broker(state: AppStateDep, paper_mode: bool = True):
+async def connect_broker(state: AppStateDep):
     """
-    Connect to broker using saved session.
+    Connect to paper broker using saved session.
 
-    If a paper broker already exists with open positions, re-authenticates
-    the Kite client instead of creating a new broker (preserves positions).
+    Always uses PaperBroker — no live trading from API.
+    If a broker already exists with open positions, re-authenticates
+    the Kite client instead of replacing (preserves positions).
     """
     access_token = load_access_token()
     session = load_session()
 
     try:
-        if paper_mode:
+        # Always paper mode — no live trading from API
+        if True:
             # Re-use existing broker if it has open positions
             existing = state.broker
             if (
@@ -147,8 +148,7 @@ async def connect_broker(state: AppStateDep, paper_mode: bool = True):
                 # Just refresh the Kite connection on the existing broker
                 if access_token:
                     existing.authenticate(access_token=access_token)
-                    user_name = session.get("user_name", "Unknown") if session else "Unknown"
-                    message = f"Reconnected Kite (preserved {len(existing._positions)} positions) as {user_name}"
+                    message = f"Reconnected Kite (preserved {len(existing._positions)} positions)"
                 else:
                     message = f"Paper mode (preserved {len(existing._positions)} positions, Kite expired)"
                 logger.info("Broker reconnected, positions preserved", positions=len(existing._positions))
@@ -163,9 +163,8 @@ async def connect_broker(state: AppStateDep, paper_mode: bool = True):
 
             if access_token:
                 broker.authenticate(access_token=access_token)
-                user_name = session.get("user_name", "Unknown") if session else "Unknown"
                 mode_str = "paper+live_data"
-                message = f"Paper trading with live market data as {user_name}"
+                message = "Paper trading with live market data"
             else:
                 broker.authenticate()
                 mode_str = "paper_only"
@@ -175,28 +174,6 @@ async def connect_broker(state: AppStateDep, paper_mode: bool = True):
             logger.info("Broker connected", mode=mode_str)
 
             return SuccessResponse(success=True, message=message)
-
-        else:
-            if not access_token:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Live trading requires valid Kite session.",
-                )
-
-            from backend.broker.zerodha import ZerodhaBroker
-            broker = ZerodhaBroker(
-                api_key=settings.kite_api_key,
-                api_secret=settings.kite_api_secret,
-            )
-            broker.authenticate(access_token=access_token)
-            state.broker = broker
-
-            user_name = session.get("user_name", "Unknown") if session else "Unknown"
-            logger.info("Broker connected", mode="live", user=user_name)
-            return SuccessResponse(
-                success=True,
-                message=f"Connected to Zerodha (live mode) as {user_name}",
-            )
 
     except HTTPException:
         raise

@@ -13,8 +13,7 @@ export interface HealthResponse {
 
 export interface AuthStatus {
   authenticated: boolean;
-  user_id: string | null;
-  user_name: string | null;
+  connected: boolean;
   session_valid: boolean;
   expires_at: string | null;
 }

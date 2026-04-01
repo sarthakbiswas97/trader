@@ -123,6 +123,7 @@ async def start_bot(
         )
 
         state.engine = engine
+        engine.running = True
 
         # Start engine in background using asyncio task
         loop = asyncio.get_event_loop()
@@ -132,6 +133,7 @@ async def start_bot(
                 await engine.run()
             except Exception as e:
                 logger.error(f"Engine error: {e}")
+                engine.running = False
 
         loop.create_task(run_engine())
 
@@ -355,4 +357,54 @@ async def square_off_all(state: AuthRequiredDep):
         "success": True,
         "positions_closed": len(results),
         "results": results,
+    }
+
+
+@router.post("/reset")
+async def reset_trading_state(state: AuthRequiredDep):
+    """
+    Reset all trading state for a fresh start.
+
+    Clears: trade history, open positions, P&L, multi-engine state.
+    Resets capital to initial amount.
+    """
+    if state.is_running:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stop the bot first before resetting.",
+        )
+
+    # Reset broker state
+    if state.broker and hasattr(state.broker, "reset"):
+        state.broker.reset()
+
+    # Clear DB tables
+    try:
+        from backend.db.database import get_session
+        from backend.db.repository import IntraTradeRepository, OpenPositionRepository
+
+        with get_session() as session:
+            OpenPositionRepository(session).clear_all()
+            # Clear intra_trades
+            from backend.db.models import IntraTrade
+            session.query(IntraTrade).delete()
+    except Exception as e:
+        logger.warning(f"DB reset partial: {e}")
+
+    # Reset multi-engine state
+    try:
+        from backend.strategies.multi_engine import MultiEngine
+        engine = MultiEngine()
+        engine.reset()
+    except Exception as e:
+        logger.warning(f"Multi-engine reset: {e}")
+
+    # Clear app state engine
+    state.engine = None
+
+    logger.info("Trading state reset — fresh start")
+
+    return {
+        "success": True,
+        "message": "All trading state cleared. Fresh start from initial capital.",
     }

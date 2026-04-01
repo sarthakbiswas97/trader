@@ -75,7 +75,7 @@ class ZerodhaBroker(Broker):
         self._authenticated = False
         self._access_token = None
 
-        logger.info("ZerodhaBroker initialized", api_key=api_key)
+        logger.info("ZerodhaBroker initialized", api_key_prefix=api_key[:4] + "****")
 
     def get_login_url(self) -> str:
         """Get Kite login URL for user authentication."""

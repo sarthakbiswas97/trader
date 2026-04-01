@@ -278,10 +278,10 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">
-                {auth?.user_name || "Not connected"}
+                {auth?.authenticated ? "Zerodha Broker" : "Not connected"}
               </p>
               <p className="text-xs text-muted-foreground">
-                {auth?.user_id ? `ID: ${auth.user_id}` : "Run scripts/auth.py to authenticate"}
+                {auth?.authenticated ? "Authenticated via OAuth" : "Run 'make deploy-auth' to authenticate"}
               </p>
               {auth?.expires_at && (
                 <p className="text-[11px] text-muted-foreground/60 mt-0.5">
