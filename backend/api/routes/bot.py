@@ -29,7 +29,7 @@ from backend.services.pipeline import (
     run_full_pipeline,
 )
 
-from backend.core.symbols import NIFTY_50
+from backend.core.symbols import NIFTY_100
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -129,7 +129,7 @@ async def start_bot(
             detail="ML model not found. Call /bot/prepare first.",
         )
 
-    symbols = request.symbols or NIFTY_50
+    symbols = request.symbols or NIFTY_100
 
     try:
         # Create execution engine

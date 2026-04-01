@@ -53,6 +53,8 @@ NIFTY_50 = [
     "BAJAJ-AUTO",
     "SHRIRAMFIN",
     "TRENT",
+    "TATAMOTORS",
+    "LTIM",
 ]
 
 # NIFTY 100 = NIFTY 50 + Next 50 most liquid large/mid-caps

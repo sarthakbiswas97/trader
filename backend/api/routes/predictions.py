@@ -18,7 +18,7 @@ from backend.api.schemas import (
     PredictionsResponse,
 )
 from backend.core.logger import get_logger
-from backend.core.symbols import NIFTY_50
+from backend.core.symbols import NIFTY_100
 from backend.services.feature_engine import FeatureEngine
 from backend.services.historical_data import HistoricalDataService
 from backend.utils.time_utils import now_ist
@@ -38,7 +38,7 @@ async def generate_predictions(
 
     This fetches latest market data and computes ML predictions.
     """
-    symbols = request.symbols or NIFTY_50
+    symbols = request.symbols or NIFTY_100
     broker = state.broker
 
     # Initialize services
@@ -133,7 +133,7 @@ async def stream_predictions(state: AuthRequiredDep):
         return StreamingResponse(error_stream(), media_type="text/event-stream")
 
     broker = state.broker
-    symbols = NIFTY_50
+    symbols = NIFTY_100
 
     data_service = HistoricalDataService()
     if hasattr(broker, "_kite") and broker._kite:
@@ -291,7 +291,7 @@ async def get_available_symbols(state: AuthRequiredDep):
     """
     Get list of available symbols for prediction.
     """
-    symbols = NIFTY_50
+    symbols = NIFTY_100
 
     return {
         "symbols": symbols,

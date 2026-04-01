@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from backend.core.logger import get_logger
-from backend.core.symbols import NIFTY_50
+from backend.core.symbols import NIFTY_100
 from backend.ml.labeling import DEFAULT_FEATURES_PATH
 
 logger = get_logger(__name__)
@@ -129,7 +129,7 @@ def model_is_stale(max_age_days: float = MODEL_MAX_AGE_DAYS) -> bool:
 
 def has_historical_data(symbols: list[str] = None) -> bool:
     """Check if we have downloaded historical data."""
-    symbols = symbols or NIFTY_50
+    symbols = symbols or NIFTY_100
     if not DATA_DIR.exists():
         return False
     # Check if at least half the symbols have 5m data
@@ -166,7 +166,7 @@ def run_download(kite, symbols: list[str] = None) -> bool:
     Returns:
         True if successful
     """
-    symbols = symbols or NIFTY_50
+    symbols = symbols or NIFTY_100
 
     from backend.services.historical_data import HistoricalDataService
 
@@ -198,7 +198,7 @@ def run_feature_generation(symbols: list[str] = None) -> bool:
     Returns:
         True if successful
     """
-    symbols = symbols or NIFTY_50
+    symbols = symbols or NIFTY_100
 
     from backend.services.feature_engine import FeatureEngine
     from backend.services.historical_data import HistoricalDataService
@@ -271,7 +271,7 @@ def run_full_pipeline(
     Returns:
         Dict with status of each step
     """
-    symbols = symbols or NIFTY_50
+    symbols = symbols or NIFTY_100
     results = {
         "download": "skipped",
         "features": "skipped",

@@ -445,10 +445,10 @@ def create_engine(
     symbols: list[str] = None,
 ) -> ExecutionEngine:
     """Factory function to create a configured ExecutionEngine."""
-    from backend.core.symbols import NIFTY_50
+    from backend.core.symbols import NIFTY_100
 
     if symbols is None:
-        symbols = NIFTY_50
+        symbols = NIFTY_100
 
     data_service = HistoricalDataService()
 
