@@ -33,3 +33,4 @@ alembic>=1.13.0
 
 # Stats
 scipy>=1.12.0
+
