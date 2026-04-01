@@ -194,11 +194,14 @@ class PredictionRecord(Base):
     prob_neutral = Column(Float)
     should_trade = Column(Boolean)
     cycle_id = Column(Integer)  # which execution cycle
+    source = Column(String(10), default="bot")  # 'bot' or 'manual'
+    session_id = Column(String(30))  # groups predictions from one generation run
     timestamp = Column(DateTime, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 
     __table_args__ = (
         Index("idx_pred_timestamp", "timestamp"),
+        Index("idx_pred_session", "session_id"),
         Index("idx_pred_symbol", "symbol"),
     )
 

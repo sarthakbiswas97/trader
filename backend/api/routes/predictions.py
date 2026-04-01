@@ -7,6 +7,7 @@ Supports both batch (POST) and streaming (SSE) generation.
 
 import json
 from datetime import datetime, timedelta
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -141,19 +142,21 @@ async def stream_predictions(state: AuthRequiredDep):
 
     feature_engine = FeatureEngine(data_service=data_service)
 
+    session_id = f"manual_{uuid4().hex[:12]}"
+
     async def event_stream():
         total = len(symbols)
         completed = 0
         up_count = 0
         down_count = 0
         neutral_count = 0
+        db_records = []
+        ts = now_ist()
 
         for i, symbol in enumerate(symbols):
             try:
-                # Progress event
                 yield f"event: progress\ndata: {json.dumps({'current': i + 1, 'total': total, 'symbol': symbol})}\n\n"
 
-                # Fetch and compute
                 end_date = now_ist()
                 start_date = end_date - timedelta(days=5)
 
@@ -183,7 +186,21 @@ async def stream_predictions(state: AuthRequiredDep):
                 else:
                     neutral_count += 1
 
-                # Send prediction event
+                # Collect for DB persistence
+                db_records.append({
+                    "symbol": pred.symbol,
+                    "direction": pred.direction,
+                    "probability": pred.probability,
+                    "confidence": pred.confidence,
+                    "prob_up": pred.prob_up,
+                    "prob_down": pred.prob_down,
+                    "prob_neutral": pred.prob_neutral,
+                    "should_trade": pred.should_trade,
+                    "source": "manual",
+                    "session_id": session_id,
+                    "timestamp": ts,
+                })
+
                 prediction_data = {
                     "symbol": pred.symbol,
                     "direction": pred.direction,
@@ -204,13 +221,24 @@ async def stream_predictions(state: AuthRequiredDep):
                 logger.error(f"Stream prediction failed for {symbol}: {e}")
                 yield f"event: error\ndata: {json.dumps({'symbol': symbol, 'error': str(e)})}\n\n"
 
-        # Done event with summary
+        # Persist all predictions to DB
+        try:
+            from backend.db.database import get_session
+            from backend.db.repository import PredictionRepository
+            with get_session() as session:
+                repo = PredictionRepository(session)
+                repo.bulk_insert(db_records)
+            logger.info(f"Persisted {len(db_records)} predictions (session={session_id})")
+        except Exception as e:
+            logger.warning(f"Failed to persist stream predictions: {e}")
+
         summary = {
             "symbols_analyzed": completed,
             "up_signals": up_count,
             "down_signals": down_count,
             "neutral_signals": neutral_count,
             "generated_at": datetime.now().isoformat(),
+            "session_id": session_id,
         }
         yield f"event: done\ndata: {json.dumps(summary)}\n\n"
 
@@ -296,5 +324,58 @@ async def get_available_symbols(state: AuthRequiredDep):
     return {
         "symbols": symbols,
         "count": len(symbols),
-        "index": "NIFTY 50",
+        "index": "NIFTY 100",
     }
+
+
+@router.get("/history")
+async def get_prediction_history(limit: int = 10):
+    """Get list of past prediction sessions (date-wise cards)."""
+    try:
+        from backend.db.database import get_session
+        from backend.db.repository import PredictionRepository
+
+        with get_session() as session:
+            repo = PredictionRepository(session)
+            return {"sessions": repo.get_sessions(limit=limit)}
+    except Exception as e:
+        logger.warning(f"Failed to read prediction history: {e}")
+        return {"sessions": []}
+
+
+@router.get("/history/{session_id}")
+async def get_prediction_session(session_id: str):
+    """Get all predictions for a specific session."""
+    try:
+        from backend.db.database import get_session
+        from backend.db.repository import PredictionRepository
+
+        with get_session() as session:
+            repo = PredictionRepository(session)
+            records = repo.get_by_session(session_id)
+            if not records:
+                raise HTTPException(status_code=404, detail="Session not found")
+            return {
+                "session_id": session_id,
+                "predictions": [
+                    {
+                        "symbol": r.symbol,
+                        "direction": r.direction,
+                        "probability": r.probability,
+                        "confidence": r.confidence,
+                        "prob_up": r.prob_up,
+                        "prob_down": r.prob_down,
+                        "prob_neutral": r.prob_neutral,
+                        "should_trade": r.should_trade,
+                        "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+                    }
+                    for r in records
+                ],
+                "total": len(records),
+                "generated_at": records[0].timestamp.isoformat() if records else None,
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Failed to read session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read session")

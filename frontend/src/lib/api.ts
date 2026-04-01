@@ -102,6 +102,23 @@ export interface PredictionsResponse {
   down_signals: number;
 }
 
+export interface PredictionSession {
+  session_id: string;
+  generated_at: string;
+  source: string;
+  total: number;
+  up_signals: number;
+  down_signals: number;
+  neutral_signals: number;
+}
+
+export interface PredictionSessionDetail {
+  session_id: string;
+  predictions: Prediction[];
+  total: number;
+  generated_at: string;
+}
+
 export interface RiskStatus {
   circuit_breaker_triggered: boolean;
   circuit_breaker_reason: string | null;
@@ -308,6 +325,14 @@ export const api = {
     }),
   latestPredictions: () =>
     request<PredictionsResponse>("/api/v1/predictions/latest"),
+  predictionHistory: (limit = 10) =>
+    request<{ sessions: PredictionSession[] }>(
+      `/api/v1/predictions/history?limit=${limit}`,
+    ),
+  predictionSession: (sessionId: string) =>
+    request<PredictionSessionDetail>(
+      `/api/v1/predictions/history/${sessionId}`,
+    ),
   symbols: () =>
     request<{ symbols: string[]; count: number; index: string }>(
       "/api/v1/predictions/symbols",

@@ -200,6 +200,48 @@ class PredictionRepository:
             .all()
         )
 
+    def get_sessions(self, limit: int = 10) -> list[dict]:
+        """Get distinct prediction sessions with summary stats."""
+        from sqlalchemy import case, literal_column
+
+        sessions = (
+            self.session.query(
+                PredictionRecord.session_id,
+                func.min(PredictionRecord.timestamp).label("generated_at"),
+                PredictionRecord.source,
+                func.count(PredictionRecord.id).label("total"),
+                func.sum(case((PredictionRecord.direction == "UP", 1), else_=0)).label("up_signals"),
+                func.sum(case((PredictionRecord.direction == "DOWN", 1), else_=0)).label("down_signals"),
+                func.sum(case((PredictionRecord.direction == "NEUTRAL", 1), else_=0)).label("neutral_signals"),
+            )
+            .filter(PredictionRecord.session_id.isnot(None))
+            .group_by(PredictionRecord.session_id, PredictionRecord.source)
+            .order_by(desc(func.min(PredictionRecord.timestamp)))
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "session_id": s.session_id,
+                "generated_at": s.generated_at.isoformat() if s.generated_at else None,
+                "source": s.source,
+                "total": s.total,
+                "up_signals": s.up_signals,
+                "down_signals": s.down_signals,
+                "neutral_signals": s.neutral_signals,
+            }
+            for s in sessions
+        ]
+
+    def get_by_session(self, session_id: str) -> list[PredictionRecord]:
+        """Get all predictions for a specific session."""
+        return (
+            self.session.query(PredictionRecord)
+            .filter(PredictionRecord.session_id == session_id)
+            .order_by(desc(PredictionRecord.confidence))
+            .all()
+        )
+
 
 class IntraTradeRepository:
     """Read/write intraday bot trades."""

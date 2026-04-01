@@ -303,7 +303,7 @@ export default function LandingPage() {
               <div className="rounded-lg border p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-medium">Large-Cap (NIFTY 50)</p>
-                  <Badge variant="outline" className="text-[10px]">48 stocks</Badge>
+                  <Badge variant="outline" className="text-[10px]">50 stocks</Badge>
                 </div>
                 <div className="space-y-2">
                   <div>
@@ -324,7 +324,7 @@ export default function LandingPage() {
               <div className="rounded-lg border border-profit/20 bg-profit/5 p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-medium text-profit">Midcap (NIFTY 100 Extra)</p>
-                  <Badge variant="outline" className="text-[10px] text-profit border-profit/20">48 stocks</Badge>
+                  <Badge variant="outline" className="text-[10px] text-profit border-profit/20">50 stocks</Badge>
                 </div>
                 <div className="space-y-2">
                   <div>
