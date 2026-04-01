@@ -153,6 +153,44 @@ export interface ReversalResponse {
   };
 }
 
+export interface PipelineComparison {
+  [key: string]: {
+    label: string;
+    scan_count: number;
+    last_scan: string | null;
+    total_pnl: number;
+    pnl_pct: number;
+    total_trades: number;
+    win_rate: number;
+    open_positions: number;
+    capital: number;
+    portfolio_value: number;
+  };
+}
+
+export interface PipelineDetail {
+  pipeline: string;
+  label: string;
+  scan_count: number;
+  last_scan: string | null;
+  regime: string;
+  capital: number;
+  portfolio_value: number;
+  cash: number;
+  total_pnl: number;
+  total_trades: number;
+  win_rate: number;
+  positions: Array<{
+    symbol: string;
+    engine: string;
+    entry_price: number;
+    quantity: number;
+    score: number;
+    entry_date: string;
+  }>;
+  recent_trades: Array<Record<string, unknown>>;
+}
+
 export interface RiskStatus {
   circuit_breaker_triggered: boolean;
   circuit_breaker_reason: string | null;
@@ -372,6 +410,16 @@ export const api = {
   symbols: () =>
     request<{ symbols: string[]; count: number; index: string }>(
       "/api/v1/predictions/symbols",
+    ),
+
+  // Pipelines (A/B testing)
+  pipelineCompare: () =>
+    request<{ comparison: PipelineComparison }>("/api/v1/bot/pipelines/compare"),
+  pipelineDetail: (id: string) =>
+    request<PipelineDetail>(`/api/v1/bot/pipelines/${id}`),
+  pipelineScans: (id: string, limit = 50) =>
+    request<{ scans: Array<Record<string, unknown>> }>(
+      `/api/v1/bot/pipelines/${id}/scans?limit=${limit}`,
     ),
 
   // Bot extras

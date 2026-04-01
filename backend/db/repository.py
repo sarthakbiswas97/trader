@@ -18,6 +18,7 @@ from backend.db.models import (
     OpenPosition,
     PredictionRecord,
     RegimeHistory,
+    ScanLog,
     StockScore,
     Trade,
 )
@@ -319,3 +320,53 @@ class RegimeRepository:
             .limit(limit)
             .all()
         )
+
+
+class ScanLogRepository:
+    """Read/write scan logs for A/B pipeline testing."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def insert(self, **kwargs) -> ScanLog:
+        log = ScanLog(**kwargs)
+        self.session.add(log)
+        self.session.flush()
+        return log
+
+    def get_by_pipeline(self, pipeline: str, limit: int = 50) -> list[ScanLog]:
+        return (
+            self.session.query(ScanLog)
+            .filter(ScanLog.pipeline == pipeline)
+            .order_by(desc(ScanLog.timestamp))
+            .limit(limit)
+            .all()
+        )
+
+    def get_comparison(self) -> dict:
+        """Get aggregate stats for A vs B comparison."""
+        from sqlalchemy import case
+
+        results = {}
+        for p in ("A", "B"):
+            logs = (
+                self.session.query(ScanLog)
+                .filter(ScanLog.pipeline == p)
+                .order_by(desc(ScanLog.timestamp))
+                .all()
+            )
+            if not logs:
+                results[p] = {"scans": 0}
+                continue
+
+            latest = logs[0]
+            results[p] = {
+                "scans": len(logs),
+                "total_entries": sum(l.entries_made or 0 for l in logs),
+                "total_exits": sum(l.exits_made or 0 for l in logs),
+                "portfolio_value": latest.portfolio_value,
+                "cash": latest.cash,
+                "last_scan": latest.timestamp.isoformat() if latest.timestamp else None,
+                "regime": latest.regime,
+            }
+        return results

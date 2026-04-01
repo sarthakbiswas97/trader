@@ -23,6 +23,7 @@ from sqlalchemy import (
     Float,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -277,4 +278,45 @@ class RegimeHistory(Base):
 
     __table_args__ = (
         Index("idx_regime_date", "date"),
+    )
+
+
+class ScanLog(Base):
+    """Every scan result for A/B pipeline testing.
+
+    Stores full context: regime, scores, picks, skips, portfolio state.
+    One row per scan per pipeline.
+    """
+
+    __tablename__ = "scan_logs"
+
+    id = Column(Integer, primary_key=True)
+    pipeline = Column(String(1), nullable=False)       # 'A' or 'B'
+    timestamp = Column(DateTime, nullable=False)
+    regime = Column(String(10), nullable=False)
+
+    # Scan summary
+    stocks_scanned = Column(Integer, default=0)
+    buy_signals = Column(Integer, default=0)
+    skipped_count = Column(Integer, default=0)
+    blocked_count = Column(Integer, default=0)
+    entries_made = Column(Integer, default=0)
+    exits_made = Column(Integer, default=0)
+    scan_duration_ms = Column(Integer)
+
+    # Full detail (JSON)
+    top_picks = Column(JSON)      # [{symbol, score, ret_5d, action, reason}, ...]
+    regime_signals = Column(JSON)  # {trend, momentum, breadth, score, ...}
+
+    # Portfolio snapshot at scan time
+    portfolio_value = Column(Float)
+    cash = Column(Float)
+    unrealized_pnl = Column(Float)
+    open_positions_count = Column(Integer)
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_scan_pipeline", "pipeline"),
+        Index("idx_scan_timestamp", "timestamp"),
     )

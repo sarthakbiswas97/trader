@@ -19,7 +19,7 @@ from backend.api.schemas import (
     RiskStatus,
 )
 from backend.core.logger import get_logger
-from backend.services.execution_engine import create_engine
+from backend.services.execution_engine import create_engine, PIPELINE_CAPITAL
 from backend.services.pipeline import (
     get_pipeline_status,
     ensure_model_ready,
@@ -408,3 +408,149 @@ async def reset_trading_state(state: AuthRequiredDep):
         "success": True,
         "message": "All trading state cleared. Fresh start from initial capital.",
     }
+
+
+# =============================================================================
+# A/B Pipeline Endpoints
+# =============================================================================
+
+
+@router.get("/pipelines")
+async def get_pipelines(state: AppStateDep):
+    """Get status of both A/B pipelines."""
+    if not state.engine or not hasattr(state.engine, "pipelines"):
+        return {"pipelines": {}, "running": False}
+
+    return state.engine.get_status()
+
+
+@router.get("/pipelines/{pipeline_id}")
+async def get_pipeline_detail(state: AppStateDep, pipeline_id: str):
+    """Get detailed status for a specific pipeline (A or B)."""
+    if not state.engine or not hasattr(state.engine, "pipelines"):
+        return {"error": "Bot not running"}
+
+    pipeline = state.engine.get_pipeline(pipeline_id)
+    if not pipeline:
+        return {"error": f"Pipeline {pipeline_id} not found"}
+
+    me = pipeline.multi_engine
+    positions = []
+    for name, engine_state in me.engine_states.items():
+        for batch in engine_state.positions:
+            for stock in batch["stocks"]:
+                positions.append({
+                    "symbol": stock["symbol"],
+                    "engine": name,
+                    "entry_price": stock["entry_price"],
+                    "quantity": stock["quantity"],
+                    "score": stock.get("score", 0),
+                    "entry_date": batch["entry_date"],
+                })
+
+    trades = []
+    for name, engine_state in me.engine_states.items():
+        for t in engine_state.trade_history[-50:]:
+            trades.append({**t, "engine": name})
+
+    total_pnl = sum(t.get("net_pnl", 0) for t in me.engine_states["largecap"].trade_history)
+    total_pnl += sum(t.get("net_pnl", 0) for t in me.engine_states["midcap"].trade_history)
+    total_trades = sum(len(s.trade_history) for s in me.engine_states.values())
+    wins = sum(
+        1 for s in me.engine_states.values()
+        for t in s.trade_history if t.get("net_pnl", 0) > 0
+    )
+
+    return {
+        "pipeline": pipeline.name,
+        "label": pipeline.label,
+        "interval_secs": pipeline.interval_secs,
+        "scan_count": pipeline.scan_count,
+        "last_scan": pipeline.last_scan.isoformat() if pipeline.last_scan else None,
+        "regime": me.current_regime.value if me.current_regime else "unknown",
+        "capital": PIPELINE_CAPITAL,
+        "portfolio_value": me.cash + sum(
+            s.capital for s in me.engine_states.values()
+        ),
+        "cash": me.cash,
+        "total_pnl": total_pnl,
+        "total_trades": total_trades,
+        "win_rate": (wins / total_trades * 100) if total_trades > 0 else 0,
+        "positions": positions,
+        "recent_trades": trades[-20:],
+    }
+
+
+@router.get("/pipelines/{pipeline_id}/scans")
+async def get_pipeline_scans(pipeline_id: str, limit: int = 50):
+    """Get scan history for a pipeline."""
+    limit = min(limit, 200)
+    try:
+        from backend.db.database import get_session
+        from backend.db.repository import ScanLogRepository
+
+        with get_session() as session:
+            repo = ScanLogRepository(session)
+            logs = repo.get_by_pipeline(pipeline_id.upper(), limit=limit)
+            return {
+                "pipeline": pipeline_id.upper(),
+                "scans": [
+                    {
+                        "timestamp": l.timestamp.isoformat() if l.timestamp else None,
+                        "regime": l.regime,
+                        "buy_signals": l.buy_signals,
+                        "entries_made": l.entries_made,
+                        "exits_made": l.exits_made,
+                        "portfolio_value": l.portfolio_value,
+                        "cash": l.cash,
+                        "open_positions": l.open_positions_count,
+                        "top_picks": l.top_picks,
+                        "scan_duration_ms": l.scan_duration_ms,
+                    }
+                    for l in logs
+                ],
+                "total": len(logs),
+            }
+    except Exception as e:
+        return {"pipeline": pipeline_id.upper(), "scans": [], "error": str(e)}
+
+
+@router.get("/pipelines/compare")
+async def compare_pipelines(state: AppStateDep):
+    """Side-by-side comparison of pipeline A vs B."""
+    if not state.engine or not hasattr(state.engine, "pipelines"):
+        return {"comparison": {}}
+
+    comparison = {}
+    for pid, p in state.engine.pipelines.items():
+        me = p.multi_engine
+        total_trades = sum(len(s.trade_history) for s in me.engine_states.values())
+        total_pnl = sum(
+            t.get("net_pnl", 0)
+            for s in me.engine_states.values()
+            for t in s.trade_history
+        )
+        wins = sum(
+            1 for s in me.engine_states.values()
+            for t in s.trade_history if t.get("net_pnl", 0) > 0
+        )
+        open_count = sum(
+            len(b["stocks"])
+            for s in me.engine_states.values()
+            for b in s.positions
+        )
+
+        comparison[pid] = {
+            "label": p.label,
+            "scan_count": p.scan_count,
+            "last_scan": p.last_scan.isoformat() if p.last_scan else None,
+            "total_pnl": round(total_pnl, 2),
+            "pnl_pct": round(total_pnl / PIPELINE_CAPITAL * 100, 2) if PIPELINE_CAPITAL else 0,
+            "total_trades": total_trades,
+            "win_rate": round(wins / total_trades * 100, 1) if total_trades > 0 else 0,
+            "open_positions": open_count,
+            "capital": PIPELINE_CAPITAL,
+            "portfolio_value": round(me.cash + sum(s.capital for s in me.engine_states.values()), 2),
+        }
+
+    return {"comparison": comparison}

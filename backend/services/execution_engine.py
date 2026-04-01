@@ -450,20 +450,35 @@ class ExecutionEngine:
         return [c.to_dict() for c in self._cycle_history[-limit:]]
 
 
-class ReversalEngine:
+PIPELINE_A_INTERVAL = 7200   # 2 hours in seconds
+PIPELINE_B_INTERVAL = 1800   # 30 minutes in seconds
+PIPELINE_CAPITAL = 100000.0  # ₹1L per pipeline
+
+
+@dataclass
+class PipelineState:
+    """State for a single A/B pipeline."""
+    name: str                    # "A" or "B"
+    label: str                   # "2-hour scan" or "30-min scan"
+    interval_secs: int
+    multi_engine: Any            # MultiEngine instance
+    last_scan: datetime | None = None
+    scan_count: int = 0
+
+
+class ABReversalEngine:
     """
-    Daily reversal strategy engine — wraps MultiEngine.
+    A/B testing engine — two independent reversal pipelines.
 
-    Runs the proven regime-gated cross-sectional reversal strategy:
-      - Once per day at market open: compute reversal scores, enter top stocks
-      - 5-day hold period, no intraday SL/TP
-      - Regime-based allocation (75% bull / 60% neutral / 25% weak)
-      - Kill switches: rolling IC + per-engine win rate
+    Pipeline A: Scans every 2 hours (3 scans/day)
+    Pipeline B: Scans every 30 minutes (12 scans/day)
 
-    Exposes the same interface as ExecutionEngine for frontend compatibility.
+    Both use identical reversal scoring, same regime gate, but
+    independent capital (₹1L each), positions, trades, kill switches.
+    Every scan is logged to DB for analysis.
     """
 
-    def __init__(self, broker: Broker, capital: float = 100000.0):
+    def __init__(self, broker: Broker):
         from collections import deque
         from backend.strategies.multi_engine import MultiEngine
         from backend.core.symbols import NIFTY_100
@@ -474,16 +489,32 @@ class ReversalEngine:
         self._cycle_count = 0
         self._cycle_history: deque[CycleResult] = deque(maxlen=100)
         self._latest_predictions: dict = {}
-        self._ran_today = False
-        self._today_date = None
 
-        # Get Kite client from broker for real market data
         kite = getattr(broker, "_kite", None)
 
-        # Core: the proven multi-engine strategy
-        self.multi_engine = MultiEngine(kite=kite, total_capital=capital)
+        # Two independent pipelines
+        self.pipelines: dict[str, PipelineState] = {
+            "A": PipelineState(
+                name="A",
+                label="2-hour scan",
+                interval_secs=PIPELINE_A_INTERVAL,
+                multi_engine=MultiEngine(kite=kite, total_capital=PIPELINE_CAPITAL),
+            ),
+            "B": PipelineState(
+                name="B",
+                label="30-min scan",
+                interval_secs=PIPELINE_B_INTERVAL,
+                multi_engine=MultiEngine(kite=kite, total_capital=PIPELINE_CAPITAL),
+            ),
+        }
 
-        # Keep these for frontend interface compatibility
+        # Reset both to ensure clean state with separate capital
+        for p in self.pipelines.values():
+            p.multi_engine.reset()
+            p.multi_engine.total_capital = PIPELINE_CAPITAL
+            p.multi_engine.cash = PIPELINE_CAPITAL
+
+        # Frontend interface compatibility
         self.risk_guardian = RiskGuardian(broker)
         self.position_manager = PositionManager(broker)
         self.trade_executor = TradeExecutor(
@@ -493,70 +524,60 @@ class ReversalEngine:
         )
 
         logger.info(
-            "ReversalEngine initialized",
-            symbols=len(self.symbols),
-            capital=capital,
+            "ABReversalEngine initialized",
+            pipelines=["A (2hr)", "B (30min)"],
+            capital_per_pipeline=PIPELINE_CAPITAL,
         )
 
-    async def start(self) -> None:
-        """Start the daily reversal engine loop."""
-        self.running = True
-        asyncio.ensure_future(self.run())
-
     def stop(self) -> None:
-        """Stop the engine."""
         self.running = False
-        logger.info("ReversalEngine stopped")
+        logger.info("ABReversalEngine stopped")
 
     async def run(self) -> None:
-        """
-        Main loop: run multi-engine daily cycle at market open.
-        Check exits hourly during market hours.
-        """
-        logger.info("ReversalEngine starting")
+        """Main loop — checks both pipelines at their respective intervals."""
+        logger.info("ABReversalEngine starting")
 
         while self.running:
             try:
-                today = now_ist().date()
-
-                # Reset daily flag on new day
-                if self._today_date != today:
-                    self._today_date = today
-                    self._ran_today = False
-
                 if not is_market_open():
                     wait_time = time_to_market_open()
                     logger.info("Market closed", next_open_in=str(wait_time))
                     await asyncio.sleep(min(60, wait_time.total_seconds()))
                     continue
 
-                # Run daily cycle ONCE per day (at market open)
-                if not self._ran_today:
-                    await self._run_daily_cycle()
-                    self._ran_today = True
-                    await asyncio.sleep(300)  # Wait 5 min after entry
-                    continue
+                now = now_ist()
 
-                # Hourly: check if any positions need exit (aged out)
-                # MultiEngine handles this in run_daily, but we can also
-                # check periodically for kill switch / circuit breaker
-                await asyncio.sleep(3600)  # Check every hour
+                for pipeline in self.pipelines.values():
+                    elapsed = (
+                        (now - pipeline.last_scan).total_seconds()
+                        if pipeline.last_scan else float("inf")
+                    )
 
-            except Exception as e:
-                logger.error(f"ReversalEngine error: {e}")
+                    if elapsed >= pipeline.interval_secs:
+                        await self._run_pipeline_cycle(pipeline)
+
+                # Sleep 60s between checks
                 await asyncio.sleep(60)
 
-        logger.info("ReversalEngine stopped")
+            except Exception as e:
+                logger.error(f"ABReversalEngine error: {e}")
+                await asyncio.sleep(60)
 
-    async def _run_daily_cycle(self) -> None:
-        """Run the multi-engine daily cycle (entries + exits)."""
+        logger.info("ABReversalEngine stopped")
+
+    async def _run_pipeline_cycle(self, pipeline: PipelineState) -> None:
+        """Run one cycle for a single pipeline and log results."""
+        import time as _time
+
         self._cycle_count += 1
+        pipeline.scan_count += 1
+        pipeline.last_scan = now_ist()
+        start_ms = _time.monotonic()
 
         try:
-            # This does everything: regime, allocation, picks, entries, exits
-            result = self.multi_engine.run_daily()
+            result = pipeline.multi_engine.run_daily()
+            duration_ms = int((_time.monotonic() - start_ms) * 1000)
 
-            # Build a CycleResult for frontend compatibility
             total_entries = sum(
                 len(eng.get("picks", []))
                 for eng in result.get("engines", {}).values()
@@ -566,10 +587,60 @@ class ReversalEngine:
                 for eng in result.get("engines", {}).values()
             )
 
+            # Build top picks detail for logging
+            top_picks = []
+            for eng_name, eng_data in result.get("engines", {}).items():
+                for pick in eng_data.get("picks", []):
+                    top_picks.append({
+                        "symbol": pick["symbol"],
+                        "score": pick.get("score", 0),
+                        "ret_5d": pick.get("ret_5d", 0),
+                        "engine": eng_name,
+                        "action": "BUY",
+                    })
+                for skip in eng_data.get("skipped", []):
+                    top_picks.append({
+                        "symbol": skip["symbol"],
+                        "ret_5d": skip.get("ret_5d", 0),
+                        "engine": eng_name,
+                        "action": "SKIP",
+                        "reason": skip.get("reason", ""),
+                    })
+
+            # Count blocked/skipped
+            blocked = sum(
+                1 for eng in result.get("engines", {}).values()
+                if eng.get("action", "").startswith("kill_switch") or
+                   eng.get("action") == "regime_inactive"
+            )
+
+            # Persist scan log
+            self._persist_scan_log(
+                pipeline=pipeline.name,
+                regime=result.get("regime", "UNKNOWN"),
+                stocks_scanned=len(self.symbols),
+                buy_signals=total_entries,
+                skipped_count=len([p for p in top_picks if p["action"] == "SKIP"]),
+                blocked_count=blocked,
+                entries_made=total_entries,
+                exits_made=total_exits,
+                scan_duration_ms=duration_ms,
+                top_picks=top_picks,
+                regime_signals=result.get("allocation"),
+                portfolio_value=result.get("portfolio_value", 0),
+                cash=result.get("cash", 0),
+                unrealized_pnl=0,
+                open_positions_count=sum(
+                    eng.get("open_positions", 0)
+                    for eng in result.get("engines", {}).values()
+                ),
+            )
+
+            # Append cycle for frontend
             cycle = CycleResult(
                 timestamp=now_ist(),
                 market_open=is_market_open(),
-                tier="daily",
+                tier=f"pipeline_{pipeline.name}",
                 symbols_scanned=len(self.symbols),
                 predictions_generated=0,
                 signals_found=total_entries,
@@ -581,74 +652,100 @@ class ReversalEngine:
             self._cycle_history.append(cycle)
 
             logger.info(
-                "Daily reversal cycle complete",
+                f"Pipeline {pipeline.name} ({pipeline.label}) cycle complete",
                 regime=result.get("regime"),
                 entries=total_entries,
                 exits=total_exits,
                 portfolio=result.get("portfolio_value"),
+                scan_number=pipeline.scan_count,
+                duration_ms=duration_ms,
             )
 
         except Exception as e:
-            logger.error(f"Daily cycle failed: {e}")
+            logger.error(f"Pipeline {pipeline.name} cycle failed: {e}")
+
+    def _persist_scan_log(self, **kwargs) -> None:
+        """Fire-and-forget: persist scan log to DB."""
+        try:
+            from backend.db.database import get_session
+            from backend.db.repository import ScanLogRepository
+
+            kwargs["timestamp"] = now_ist()
+            with get_session() as session:
+                ScanLogRepository(session).insert(**kwargs)
+        except Exception as e:
+            logger.warning(f"Failed to persist scan log: {e}")
+
+    # =========================================================================
+    # Frontend interface (same as old ReversalEngine)
+    # =========================================================================
+
+    @property
+    def multi_engine(self):
+        """Default to pipeline A for backward-compatible endpoints."""
+        return self.pipelines["A"].multi_engine
+
+    def get_pipeline(self, pipeline_id: str) -> PipelineState | None:
+        return self.pipelines.get(pipeline_id.upper())
 
     def square_off_all(self) -> list[dict[str, Any]]:
-        """Square off all positions via trade executor."""
         return [r.to_dict() for r in self.trade_executor.square_off_all()]
 
     def get_status(self) -> dict[str, Any]:
-        me = self.multi_engine
+        pipeline_status = {}
+        for pid, p in self.pipelines.items():
+            me = p.multi_engine
+            pipeline_status[pid] = {
+                "label": p.label,
+                "interval_secs": p.interval_secs,
+                "scan_count": p.scan_count,
+                "last_scan": p.last_scan.isoformat() if p.last_scan else None,
+                "regime": me.current_regime.value if me.current_regime else "unknown",
+                "portfolio_value": me.total_capital + me.cash,
+                "cash": me.cash,
+                "engines": {
+                    name: {
+                        "capital": state.capital,
+                        "open_positions": sum(len(b["stocks"]) for b in state.positions),
+                        "total_trades": len(state.trade_history),
+                        "pnl": sum(t.get("net_pnl", 0) for t in state.trade_history),
+                        "active": state.active,
+                    }
+                    for name, state in me.engine_states.items()
+                },
+            }
+
         return {
             "running": self.running,
+            "strategy": "ab_reversal",
             "cycle_count": self._cycle_count,
-            "strategy": "reversal",
-            "regime": me.current_regime.value if me.current_regime else "unknown",
+            "pipelines": pipeline_status,
             "last_cycle": (
                 self._cycle_history[-1].to_dict()
                 if self._cycle_history else None
             ),
-            "hot_watchlist": [],
-            "positions": self.position_manager.get_summary(),
-            "risk": self.risk_guardian.get_status(),
-            "executor": self.trade_executor.get_summary(),
-            "engines": {
-                name: {
-                    "capital": state.capital,
-                    "open_positions": sum(len(b["stocks"]) for b in state.positions),
-                    "total_trades": len(state.trade_history),
-                    "pnl": sum(t.get("net_pnl", 0) for t in state.trade_history),
-                    "active": state.active,
-                }
-                for name, state in me.engine_states.items()
-            },
         }
 
     def get_recent_cycles(self, limit: int = 10) -> list[dict[str, Any]]:
         return [c.to_dict() for c in self._cycle_history[-limit:]]
 
     def get_hot_watchlist(self) -> list[dict[str, Any]]:
-        """Return current open positions as watchlist items."""
         items = []
-        for name, state in self.multi_engine.engine_states.items():
-            for batch in state.positions:
-                for stock in batch["stocks"]:
-                    items.append({
-                        "symbol": stock["symbol"],
-                        "tier": 1,
-                        "engine": name,
-                        "entry_price": stock["entry_price"],
-                        "score": stock.get("score", 0),
-                        "entry_date": batch["entry_date"],
-                    })
+        for pid, p in self.pipelines.items():
+            for name, state in p.multi_engine.engine_states.items():
+                for batch in state.positions:
+                    for stock in batch["stocks"]:
+                        items.append({
+                            "symbol": stock["symbol"],
+                            "pipeline": pid,
+                            "engine": name,
+                            "entry_price": stock["entry_price"],
+                            "score": stock.get("score", 0),
+                            "entry_date": batch["entry_date"],
+                        })
         return items
 
 
-def create_engine(
-    broker: Broker,
-    symbols: list[str] = None,
-) -> ReversalEngine:
-    """Factory function to create the reversal-based trading engine."""
-    capital = 100000.0
-    if hasattr(broker, "initial_capital"):
-        capital = broker.initial_capital
-
-    return ReversalEngine(broker=broker, capital=capital)
+def create_engine(broker: Broker, **kwargs) -> ABReversalEngine:
+    """Factory function to create the A/B reversal testing engine."""
+    return ABReversalEngine(broker=broker)

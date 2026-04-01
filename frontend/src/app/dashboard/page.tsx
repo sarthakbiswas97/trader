@@ -30,6 +30,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { MarketStatusBanner } from "@/components/market-status";
 import { RegimeStatus } from "@/components/regime-status";
+import { PipelineComparisonPanel } from "@/components/pipeline-comparison";
 import type {
   PositionsResponse,
   BotStatus,
@@ -315,6 +316,9 @@ export default function DashboardPage() {
 
       {/* Multi-Engine Regime Status */}
       <RegimeStatus />
+
+      {/* A/B Pipeline Comparison */}
+      <PipelineComparisonPanel />
 
       {/* Hot Watchlist */}
       {watchlist && watchlist.tier1_count > 0 && (
