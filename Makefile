@@ -84,13 +84,19 @@ VPS_CONTAINER = trader
 VPS_APP_PORT = 8000
 VPS_DOMAIN = api.trader.sarthakb.xyz
 
-deploy-auth: auth ## Authenticate locally, copy session to VPS, connect broker, start bot
+deploy-auth: auth ## Authenticate locally, copy session to VPS, connect broker, download data, start bot
 	scp .kite_session $(VPS_HOST):~/kite_session
 	ssh $(VPS_HOST) "docker cp ~/kite_session $(VPS_CONTAINER):/app/.kite_session && rm ~/kite_session"
 	ssh $(VPS_HOST) "docker restart $(VPS_CONTAINER)"
 	@echo "Waiting for container to start..."
-	@sleep 4
+	@sleep 8
 	ssh $(VPS_HOST) "curl -sf -X POST http://localhost:$(VPS_APP_PORT)/api/v1/auth/connect"
+	@echo ""
+	@echo "=== Downloading Data (this takes ~2 min) ==="
+	ssh $(VPS_HOST) "curl -sf -X POST http://localhost:$(VPS_APP_PORT)/api/v1/bot/prepare -H 'Content-Type: application/json' -d '{}'"
+	@echo ""
+	@echo "Waiting for data download..."
+	ssh $(VPS_HOST) "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do sleep 5; STATUS=$$(curl -sf http://localhost:$(VPS_APP_PORT)/api/v1/bot/prepare/status | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get(\"step\",\"waiting\"))' 2>/dev/null); echo \"  $$STATUS\"; if echo $$STATUS | grep -q 'complete\|done\|idle'; then break; fi; done"
 	@echo ""
 	@echo "=== Starting Bot ==="
 	ssh $(VPS_HOST) "curl -sf -X POST http://localhost:$(VPS_APP_PORT)/api/v1/bot/start -H 'Content-Type: application/json' -d '{}'"
