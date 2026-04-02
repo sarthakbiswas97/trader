@@ -24,31 +24,54 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
+def _get_all_pipeline_brokers(state) -> list:
+    """Get broker instances from A/B pipelines if available."""
+    if state.engine and hasattr(state.engine, "brokers"):
+        return list(state.engine.brokers.values())
+    return [state.broker] if state.broker else []
+
+
+def _aggregate_positions(state):
+    """Get positions from all pipeline brokers."""
+    all_positions = []
+    brokers = _get_all_pipeline_brokers(state)
+    seen = set()
+    for broker in brokers:
+        for p in broker.get_positions():
+            key = f"{p.symbol}_{p.quantity}_{p.avg_price}"
+            if key not in seen:
+                seen.add(key)
+                all_positions.append(p)
+    return all_positions
+
+
+def _aggregate_pnl(state) -> tuple[float, float, float]:
+    """Get total realized P&L, cash, capital from all pipeline brokers."""
+    brokers = _get_all_pipeline_brokers(state)
+    total_realized = sum(b.realized_pnl for b in brokers if hasattr(b, "realized_pnl"))
+    total_cash = sum(b.capital for b in brokers if hasattr(b, "capital"))
+    return total_realized, total_cash
+
+
 @router.get("/summary", response_model=PortfolioSummary)
 async def get_portfolio_summary(state: AuthRequiredDep):
     """
-    Get portfolio summary with P&L.
+    Get portfolio summary with P&L (aggregated from all pipeline brokers).
     """
-    broker = state.broker
-    margin = broker.get_margin()
-    positions = broker.get_positions()
+    positions = _aggregate_positions(state)
+    realized_pnl, cash = _aggregate_pnl(state)
 
     invested = sum(p.invested_value for p in positions)
     current = sum(p.market_value for p in positions)
     unrealized_pnl = current - invested
 
-    # Get realized P&L from paper broker if available
-    realized_pnl = 0.0
-    if hasattr(broker, "realized_pnl"):
-        realized_pnl = broker.realized_pnl
-
-    total_capital = margin.available_cash + current
+    total_capital = cash + current
     total_pnl = realized_pnl + unrealized_pnl
     total_pnl_pct = (total_pnl / total_capital * 100) if total_capital > 0 else 0
 
     return PortfolioSummary(
         total_capital=total_capital,
-        available_cash=margin.available_cash,
+        available_cash=cash,
         invested_value=invested,
         current_value=current,
         unrealized_pnl=unrealized_pnl,
@@ -62,24 +85,13 @@ async def get_portfolio_summary(state: AuthRequiredDep):
 @router.get("/positions", response_model=PositionsResponse)
 async def get_positions(state: AuthRequiredDep):
     """
-    Get all open positions.
+    Get all open positions (aggregated from all pipeline brokers).
     """
-    broker = state.broker
-    positions = broker.get_positions()
+    positions = _aggregate_positions(state)
+    realized_pnl, cash = _aggregate_pnl(state)
 
-    # Convert to schema
     position_list = []
     for p in positions:
-        entry_time = None
-        entry_reason = None
-
-        # Get additional info from position manager if available
-        if state.engine and state.engine.position_manager:
-            managed = state.engine.position_manager.get_position(p.symbol)
-            if managed:
-                entry_time = managed.entry_time
-                entry_reason = managed.entry_reason
-
         position_list.append(PositionSchema(
             symbol=p.symbol,
             quantity=p.quantity,
@@ -87,27 +99,24 @@ async def get_positions(state: AuthRequiredDep):
             current_price=p.current_price,
             pnl=p.pnl,
             pnl_percent=p.pnl_percent,
-            entry_time=entry_time,
-            entry_reason=entry_reason,
+            entry_time=None,
+            entry_reason=None,
         ))
 
-    # Calculate summary
-    margin = broker.get_margin()
     invested = sum(p.invested_value for p in positions)
     current = sum(p.market_value for p in positions)
     unrealized = current - invested
-    realized = broker.realized_pnl if hasattr(broker, "realized_pnl") else 0.0
-    total_capital = margin.available_cash + current
+    total_capital = cash + current
 
     summary = PortfolioSummary(
         total_capital=total_capital,
-        available_cash=margin.available_cash,
+        available_cash=cash,
         invested_value=invested,
         current_value=current,
         unrealized_pnl=unrealized,
-        realized_pnl=realized,
-        total_pnl=realized + unrealized,
-        total_pnl_percent=((realized + unrealized) / total_capital * 100) if total_capital > 0 else 0,
+        realized_pnl=realized_pnl,
+        total_pnl=realized_pnl + unrealized,
+        total_pnl_percent=((realized_pnl + unrealized) / total_capital * 100) if total_capital > 0 else 0,
         open_positions=len(positions),
     )
 
@@ -127,12 +136,31 @@ def _safe_trade_side(side_value: str) -> TradeSide:
 
 @router.get("/trades", response_model=TradesResponse)
 async def get_trades(state: AuthRequiredDep, limit: int = 50):
-    """Get trade history (in-memory + database fallback)."""
+    """Get trade history from pipeline engines + database fallback."""
     limit = min(limit, 500)
     trades_data = []
 
-    # 1. Get from trade executor (in-memory, current session)
-    if state.engine and state.engine.trade_executor:
+    # 1. Get from pipeline MultiEngine trade histories
+    if state.engine and hasattr(state.engine, "pipelines"):
+        for pid, pipeline in state.engine.pipelines.items():
+            for eng_name, eng_state in pipeline.multi_engine.engine_states.items():
+                for t in eng_state.trade_history[-limit:]:
+                    trades_data.append(TradeSchema(
+                        id=f"{pid}_{eng_name}_{t.get('symbol')}_{t.get('entry_date')}",
+                        symbol=t.get("symbol", ""),
+                        side=_safe_trade_side("BUY"),
+                        quantity=t.get("quantity", 0),
+                        entry_price=t.get("entry_price", 0),
+                        exit_price=t.get("exit_price"),
+                        entry_time=datetime.fromisoformat(t["entry_date"]) if t.get("entry_date") else None,
+                        exit_time=datetime.fromisoformat(t["exit_date"]) if t.get("exit_date") else None,
+                        pnl=t.get("net_pnl"),
+                        status=TradeStatus.CLOSED,
+                        exit_reason=f"Pipeline {pid} | {eng_name}",
+                    ))
+
+    # 2. Fallback: Get from trade executor (in-memory, current session)
+    if not trades_data and state.engine and state.engine.trade_executor:
         history = state.engine.trade_executor.get_trade_history()
         for i, t in enumerate(history[-limit:]):
             trades_data.append(TradeSchema(
@@ -193,15 +221,22 @@ async def get_trades(state: AuthRequiredDep, limit: int = 50):
 @router.get("/margin")
 async def get_margin(state: AuthRequiredDep):
     """
-    Get margin/funds information.
+    Get margin/funds information (aggregated from pipeline brokers).
     """
-    broker = state.broker
-    margin = broker.get_margin()
+    brokers = _get_all_pipeline_brokers(state)
+    total_cash = 0
+    total_used = 0
+    total_balance = 0
+    for b in brokers:
+        m = b.get_margin()
+        total_cash += m.available_cash
+        total_used += m.used_margin
+        total_balance += m.total_balance
 
     return {
-        "available_cash": margin.available_cash,
-        "used_margin": margin.used_margin,
-        "total_balance": margin.total_balance,
+        "available_cash": total_cash,
+        "used_margin": total_used,
+        "total_balance": total_balance,
     }
 
 
