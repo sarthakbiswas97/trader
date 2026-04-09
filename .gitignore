@@ -68,6 +68,9 @@ backend/data/training/*.csv
 backend/data/training/*.parquet
 *.csv.gz
 
+# Ops reports (operational data, not source)
+backend/data/ops_reports/
+
 # Keep structure but ignore contents
 !backend/data/.gitkeep
 

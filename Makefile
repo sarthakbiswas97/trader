@@ -1,5 +1,6 @@
 .PHONY: install dev backend frontend auth download features train bot test stop clean \
-	deploy-auth deploy-redeploy deploy-logs deploy-health deploy-status deploy-ssh
+	deploy-auth deploy-redeploy deploy-logs deploy-health deploy-status deploy-ssh \
+	ops-health ops-report ops-monitor
 
 # =============================================================================
 # Setup
@@ -74,6 +75,22 @@ sweep: ## Run TP/SL parameter sweep
 
 robustness: ## Run rolling window robustness test
 	. backend/.venv/bin/activate && python3 backend/scripts/robustness.py
+
+# =============================================================================
+# Ops Agents (invoked by Claude Code /schedule and /loop)
+# =============================================================================
+
+test: ## Run pytest suite
+	. backend/.venv/bin/activate && pytest
+
+ops-health: ## Morning health check (verify session, data, bot)
+	. backend/.venv/bin/activate && python3 -m backend.agents.health_check
+
+ops-report: ## Generate today's post-market report
+	. backend/.venv/bin/activate && python3 -m backend.agents.post_market_report
+
+ops-monitor: ## One-shot live monitor check
+	. backend/.venv/bin/activate && python3 -m backend.agents.live_monitor
 
 # =============================================================================
 # VPS Deployment (run from local machine)
